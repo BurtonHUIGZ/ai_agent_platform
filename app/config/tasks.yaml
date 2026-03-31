@@ -1,0 +1,33 @@
+tasks:
+  research_task:
+    description: |
+      分析用户需求：{task}
+      自动判断任务类型，给出执行方案。
+      全程使用中文，不输出多余内容。
+    expected_output: "清晰的需求分析与可执行方案"
+    agent: researcher
+
+  execute_task:
+    description: |
+      根据分析结果执行任务：{research_result}
+      直接输出最终结果，不解释、不废话。
+      全程使用中文。
+    expected_output: "最终执行结果"
+    agent: executor
+
+  validate_task:
+    description: |
+      校验用户需求：{task}
+      校验执行结果：{execute_result}
+      检查是否满足需求、是否正确、是否完整。
+      全程使用中文。
+    expected_output: "校验报告"
+    agent: validator
+
+  summarize_task:
+    description: |
+      汇总最终结果：{execute_result}
+      输出整洁、专业、直接可用的中文报告。
+      只保留最终内容，不要过程。
+    expected_output: "最终报告"
+    agent: manager

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>AI Agent 全能智能平台</title>
+<link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="stylesheet" href="/static/css/style.css">
+
+<!-- 登录页 -->
+<div id="loginPage" class="page-login">
+    <div class="login-card">
+        <h2><i class="fa-solid fa-brain"></i> AI Agent 智能平台</h2>
+        <p>多智能体协作 | MCP+RAG 全能生态</p>
+        <div class="form-group">
+            <label>用户名</label>
+            <input id="username" value="admin">
+        </div>
+        <div class="form-group">
+            <label>密码</label>
+            <input id="password" type="password" value="admin123456">
+        </div>
+        <button class="btn-primary btn-block" onclick="login()">登录系统</button>
+    </div>
+</div>
+
+<!-- 主页面 -->
+<div id="mainPage" class="page-main">
+    <div class="header">
+        <h1><i class="fa-solid fa-robot"></i> AI 多智能体任务控制台</h1>
+    </div>
+
+    <div class="container">
+        <div class="card">
+            <h3><i class="fa-solid fa-paper-plane"></i> 任务输入</h3>
+            <textarea id="taskInput" placeholder="请输入你的任务：写代码、写歌、查询、分析、生成报告..."></textarea>
+            <div class="btn-group">
+                <button class="btn-success" onclick="runTask()">🚀 运行任务</button>
+                <button class="btn-secondary" onclick="clearAll()">🗑 清空</button>
+            </div>
+        </div>
+
+        <!-- 实时Agent执行日志（黑色控制台） -->
+        <div class="card">
+            <h3><i class="fa-solid fa-terminal"></i> 多智能体执行过程</h3>
+            <div id="log" class="console-log"></div>
+        </div>
+
+        <!-- 最终报告 -->
+        <div class="card">
+            <h3><i class="fa-solid fa-file-text"></i> 最终报告</h3>
+            <div id="reportArea" class="report-area"></div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/app.js"></script>

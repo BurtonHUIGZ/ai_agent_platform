@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+crewai
+langgraph
+langchain_openai
+ollama
+chromadb
+pydantic
+python-multipart
+loguru
+psutil
+sse-starlette
+langchain_ollama
+langchain_community
+langchain-text-splitters
+pypdf
+python-docx
