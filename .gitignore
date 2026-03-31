@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+*.manifest
+*.spec
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Linting
+.ruff_cache/
+.ruff/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+logs/
+*.log
+
+# Data (local databases)
+app/data/chroma_db/
+app/data/uploads/
+*.db
+*.sqlite
+
+# Reports
+reports/
+*.pdf
+*.xlsx
+*.csv
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Temp files
+*.tmp
+*.temp
+.cache/
+
+# pyc
+*.pyc

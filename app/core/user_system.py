@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from fastapi import HTTPException
 import uuid
 
-USERS = {"admin": {"pwd": "admin123456", "role": "admin", "permissions": ["agent.run", "user.list", "task.view", "monitor.view"]}}
+USERS = {"admin": {"pwd": "admin123456", "role": "admin", "permissions": ["agent.run", "user.list", "task.view", "monitor.view", "memory.view", "memory.write"]}}
 TOKENS = {}
 
 class LoginReq(BaseModel):

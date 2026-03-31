@@ -17,7 +17,7 @@ def load_agents():
             backstory=cfg["backstory"],
             llm=llm,
             verbose=cfg.get("verbose", True),
-            memory=cfg.get("memory", True),
+            memory=False,
             allow_delegation=cfg.get("allow_delegation", True),
         )
     return agents
