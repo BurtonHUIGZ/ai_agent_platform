@@ -3,6 +3,7 @@ import json
 import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form, Header
 from pydantic import BaseModel
+from typing import Optional
 import tempfile
 import os
 
@@ -51,6 +52,7 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
 class TaskRequest(BaseModel):
     task: str
     user_id: str = "default"
+    session_id: Optional[str] = None
 
 
 agent_router = APIRouter(prefix="/api/agent")
@@ -80,7 +82,7 @@ async def run_agent_stream(req: TaskRequest):
         
         await ws_manager.broadcast(tid, message)
     
-    asyncio.create_task(run_streaming_task(task_id, req.task, req.user_id, send_message))
+    asyncio.create_task(run_streaming_task(task_id, req.task, req.user_id, send_message, req.session_id))
     
     return {
         "code": 200,

@@ -3,8 +3,43 @@ from chromadb.config import Settings as ChromaSettings
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 import uuid
+from collections import OrderedDict
 
 from app.settings import CHROMA_PATH
+
+
+class ShortTermMemory:
+    def __init__(self, max_size: int = 20):
+        self.history: Dict[str, List[Dict[str, Any]]] = {}
+        self.max_size = max_size
+
+    def add(self, session_id: str, role: str, content: str):
+        if session_id not in self.history:
+            self.history[session_id] = []
+        self.history[session_id].append({
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat()
+        })
+        if len(self.history[session_id]) > self.max_size:
+            self.history[session_id].pop(0)
+
+    def get_context(self, session_id: str, last_n: int = 10) -> str:
+        msgs = self.history.get(session_id, [])[-last_n:]
+        return "\n".join([f"{m['role']}: {m['content']}" for m in msgs])
+
+    def get_messages(self, session_id: str, last_n: int = 10) -> List[Dict[str, Any]]:
+        return self.history.get(session_id, [])[-last_n:]
+
+    def clear(self, session_id: str):
+        if session_id in self.history:
+            self.history[session_id] = []
+
+    def clear_all(self):
+        self.history = {}
+
+
+short_term_memory = ShortTermMemory()
 
 
 def build_where_filter(user_id: str, memory_type: Optional[str] = None) -> Dict:

@@ -1,33 +1,28 @@
 tasks:
   research_task:
-    description: |
-      分析用户需求：{task}
-      自动判断任务类型，给出执行方案。
-      全程使用中文，不输出多余内容。
-    expected_output: "清晰的需求分析与可执行方案"
+    role_zh: "🔍 智能需求分析师"
+    start_msg: "开始分析用户需求..."
+    expected_output: "清晰的需求理解与可执行方案，中文"
     agent: researcher
+    prompt_key: research
 
   execute_task:
-    description: |
-      根据分析结果执行任务：{research_result}
-      直接输出最终结果，不解释、不废话。
-      全程使用中文。
-    expected_output: "最终执行结果"
+    role_zh: "⚙️ 全能任务执行者"
+    start_msg: "开始执行任务..."
+    expected_output: "直接输出最终结果，中文"
     agent: executor
+    prompt_key: execute
 
   validate_task:
-    description: |
-      校验用户需求：{task}
-      校验执行结果：{execute_result}
-      检查是否满足需求、是否正确、是否完整。
-      全程使用中文。
-    expected_output: "校验报告"
+    role_zh: "🧪 结果质量校验师"
+    start_msg: "开始校验..."
+    expected_output: "中文校验报告"
     agent: validator
+    prompt_key: validate
 
   summarize_task:
-    description: |
-      汇总最终结果：{execute_result}
-      输出整洁、专业、直接可用的中文报告。
-      只保留最终内容，不要过程。
-    expected_output: "最终报告"
+    role_zh: "📋 最终报告汇总师"
+    start_msg: "开始汇总最终报告..."
+    expected_output: "最终答案，纯中文，直接可用"
     agent: manager
+    prompt_key: summarize

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Header, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
-from app.core.memory import memory
+from app.core.memory import memory, short_term_memory
 from app.core.user_system import check
 import tempfile
 import os
@@ -77,6 +77,37 @@ def get_stats(user_id: str, token: str = Header(None)):
     check(token, "memory.view")
     stats = memory.get_memory_stats(user_id)
     return {"code": 200, "data": stats}
+
+
+class ShortTermContext(BaseModel):
+    session_id: str
+    last_n: int = 10
+
+
+@router.post("/short_term/context")
+def get_short_term_context(req: ShortTermContext, token: str = Header(None)):
+    check(token, "memory.view")
+    messages = short_term_memory.get_messages(req.session_id, req.last_n)
+    return {"code": 200, "data": messages}
+
+
+@router.post("/short_term/clear")
+def clear_short_term_context(session_id: str = Form(...), token: str = Header(None)):
+    check(token, "memory.write")
+    short_term_memory.clear(session_id)
+    return {"code": 200, "msg": "短期记忆已清除"}
+
+
+@router.post("/short_term/add")
+def add_short_term_message(
+    session_id: str = Form(...),
+    role: str = Form(...),
+    content: str = Form(...),
+    token: str = Header(None)
+):
+    check(token, "memory.write")
+    short_term_memory.add(session_id, role, content)
+    return {"code": 200, "msg": "已添加"}
 
 
 def extract_text_from_file(file_path: str, file_extension: str) -> str:

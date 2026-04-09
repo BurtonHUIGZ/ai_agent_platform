@@ -29,3 +29,6 @@ researcher = agents["researcher"]
 executor = agents["executor"]
 validator = agents["validator"]
 manager = agents["manager"]
+
+from app.agent.tasks import init_task_factory
+init_task_factory(agents)
