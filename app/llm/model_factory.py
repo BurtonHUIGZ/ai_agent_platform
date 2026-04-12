@@ -1,23 +1,59 @@
 import os
 from app.settings import settings
-
-# 暴力修复：直接设置环境变量，绕过所有校验
-os.environ["OPENAI_API_KEY"] = settings.LLM_API_KEY
-os.environ["OPENAI_MODEL_NAME"] = settings.LLM_MODEL
-os.environ["OPENAI_API_BASE"] = settings.LLM_BASE_URL
-
+from app.settings import get_model_config, get_available_providers
+from crewai import LLM as CrewAILLM
 from langchain_ollama import ChatOllama
 
-from langchain_openai import ChatOpenAI
+
+def _get_llm_config():
+    config = get_model_config(settings.ACTIVE_PROVIDER)
+    provider = settings.ACTIVE_PROVIDER
+    model_name = config["model"]
+    if provider == "ALIYUN_BAILIAN":
+        model_name = f"openai/{model_name}"
+    return config, provider, model_name
+
+
+config, provider, model_name = _get_llm_config()
+
+os.environ["OPENAI_API_KEY"] = config["api_key"]
+os.environ["OPENAI_MODEL_NAME"] = model_name
+os.environ["OPENAI_API_BASE"] = config["base_url"]
+
+
+def debug_llm_env():
+    """调试：打印当前LLM环境变量"""
+    return {
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+        "OPENAI_MODEL_NAME": os.environ.get("OPENAI_MODEL_NAME"),
+        "OPENAI_API_BASE": os.environ.get("OPENAI_API_BASE"),
+        "ACTIVE_PROVIDER": settings.ACTIVE_PROVIDER,
+    }
 
 
 class ModelFactory:
     @staticmethod
-    def get_llm(model_name=None):
-        model = model_name or settings.LLM_MODEL
-        return ChatOllama(
-            base_url=settings.LLM_BASE_URL,
-            api_key="dummy-key",  # 随便填，本地不需要真实key
-            model=model,
-            temperature=0.1
-        )
+    def get_llm(temperature: float = None):
+        """获取LLM实例"""
+        config, provider, model_name = _get_llm_config()
+        temp = temperature if temperature is not None else config.get("temperature", 0.7)
+
+        if provider == "OLLAMA":
+            return ChatOllama(
+                model=config["model"],
+                base_url=config["base_url"],
+                api_key=config["api_key"],
+                temperature=temp
+            )
+        else:
+            return CrewAILLM(
+                model=model_name,
+                base_url=config["base_url"],
+                api_base=config["base_url"],
+                api_key=config["api_key"],
+                temperature=temp,
+                provider="litellm"
+            )
+
+
+llm = ModelFactory.get_llm()

@@ -1,4 +1,11 @@
 tasks:
+  route_task:
+    role_zh: "🎯 智能路由"
+    start_msg: "分析任务意图..."
+    expected_output: "JSON 格式路由决策"
+    agent: router
+    prompt_key: route
+
   research_task:
     role_zh: "🔍 智能需求分析师"
     start_msg: "开始分析用户需求..."

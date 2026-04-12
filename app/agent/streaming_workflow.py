@@ -1,15 +1,32 @@
 import asyncio
+import json
+import re
+import os
 from typing import Dict, Any, List, TypedDict, Optional
-from crewai import Crew
+from crewai import Crew, Agent
 
 from app.agent.tasks import TASK_CONFIGS
 from app.agent.agents import agents
 from app.core.memory import memory, short_term_memory
+from app.llm.model_factory import llm, debug_llm_env
+
+print(f"[DEBUG LLM ENV] {debug_llm_env()}")
 
 
 def _get_task_factory():
     from app.agent.tasks import TaskFactory
     return TaskFactory(agents)
+
+
+class RouteDecision(TypedDict):
+    task_type: str
+    reason: str
+    need_memory: bool
+    skip_research: bool
+    skip_validate: bool
+    skip_summary: bool
+    agent_level: str
+    response_style: str
 
 
 class StreamingAgentState(TypedDict):
@@ -24,11 +41,65 @@ class StreamingAgentState(TypedDict):
     execute_result: str
     validate_result: str
     final_report: str
+    route_decision: RouteDecision
 
 
 class StreamingWorkflow:
     def __init__(self, send_func):
         self.send_func = send_func
+        self.router = self._create_router_agent()
+
+    def _create_router_agent(self) -> Agent:
+        from app.agent.agents import router
+        return router
+
+    def _parse_route_decision(self, raw_output: str) -> RouteDecision:
+        default_decision = {
+            "task_type": "complex",
+            "reason": "默认复杂任务",
+            "need_memory": True,
+            "skip_research": False,
+            "skip_validate": False,
+            "skip_summary": False,
+            "agent_level": "expert",
+            "response_style": "detailed"
+        }
+
+        try:
+            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw_output, re.DOTALL)
+            if json_match:
+                decision = json.loads(json_match.group())
+                key_map = {
+                    "task_type": ["task_type", "task_类型", "类型"],
+                    "reason": ["reason", "原因", "判断理由"],
+                    "need_memory": ["need_memory", "需要内存", "需要记忆"],
+                    "skip_research": ["skip_research", "跳过研究"],
+                    "skip_validate": ["skip_validate", "跳过验证"],
+                    "skip_summary": ["skip_summary", "跳过总结"],
+                    "agent_level": ["agent_level", "代理级别", "agent级别"],
+                    "response_style": ["response_style", "响应样式", "响应风格"]
+                }
+
+                def get_val(d, keys, default):
+                    for k in keys:
+                        if k in d:
+                            return d[k]
+                    return default
+
+                return {
+                    "task_type": get_val(decision, key_map["task_type"], "complex"),
+                    "reason": get_val(decision, key_map["reason"], ""),
+                    "need_memory": get_val(decision, key_map["need_memory"], True),
+                    "skip_research": get_val(decision, key_map["skip_research"], False),
+                    "skip_validate": get_val(decision, key_map["skip_validate"], False),
+                    "skip_summary": get_val(decision, key_map["skip_summary"], False),
+                    "agent_level": get_val(decision, key_map["agent_level"], "expert"),
+                    "response_style": get_val(decision, key_map["response_style"], "detailed")
+                }
+        except (json.JSONDecodeError, KeyError) as e:
+            pass
+
+        return default_decision
 
     async def recall_memories_node(self, state: StreamingAgentState) -> Dict:
         user_id = state.get("user_id", "default")
@@ -58,41 +129,71 @@ class StreamingWorkflow:
         return {"short_term_context": short_term_context, "related_memories": [memory_text]}
 
     async def route_node(self, state: StreamingAgentState) -> Dict:
-        task_id = state.get("task_id", "unknown")
+
         task = state["task"]
+        task_id = state.get("task_id", "unknown")
 
-        prompt = f"""判断用户意图，只输出一个词：
-
-任务类型选项：
-- chat: 闲聊、问候、自我介绍、简单问答等简单对话
-- task: 需要执行具体任务（写代码、写报告、分析、创作等）
-
-用户输入：{task}
-
-输出："""
-
-        from app.agent.agents import researcher
-        simple_task = _get_task_factory().create(
-            "research_task",
-            short_term_context="",
-            related_memories="",
-            task=prompt
-        )
-        crew = Crew(agents=[researcher], tasks=[simple_task], verbose=False)
-
-        loop = asyncio.get_event_loop()
-        task_type = await loop.run_in_executor(
-            None, lambda: str(crew.kickoff())
-        )
-
-        task_type = "task" if "task" in task_type.lower() else "chat"
-
-        await self.send_func(task_id, "thinking", "system", {
-            "content": f"🎯 意图识别：{task_type}",
+        await self.send_func(task_id, "thinking", "router", {
+            "content": "🎯 分析任务意图...",
             "streaming": False
         })
 
-        return {"task_type": task_type}
+        from app.agent.tasks import load_prompts
+        prompts = load_prompts()
+        route_prompt = prompts.get("route", "").format(task=task)
+
+        raw_output = ""
+        try:
+            loop = asyncio.get_event_loop()
+            from app.settings import settings
+            if settings.ACTIVE_PROVIDER == "OLLAMA":
+                from langchain_core.messages import HumanMessage
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: llm.invoke([HumanMessage(content=route_prompt)])
+                )
+                raw_output = response.content if hasattr(response, 'content') else str(response)
+            else:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: llm.call(route_prompt)
+                )
+                raw_output = response.content if hasattr(response, 'content') else str(response)
+
+            route_decision = self._parse_route_decision(raw_output)
+            task_type = route_decision["task_type"]
+
+            await self.send_func(task_id, "thinking", "router", {
+                "content": f"✅ 路由决策：{task_type} | {route_decision['reason']}",
+                "streaming": False
+            })
+
+            return {
+                "task_type": task_type,
+                "route_decision": route_decision
+            }
+        except Exception as e:
+            import loguru
+            logger = loguru.logger
+            logger.error(f"路由分析失败: {e}\nraw_output: {raw_output}")
+            await self.send_func(task_id, "thinking", "router", {
+                "content": f"⚠️ 路由分析失败，使用默认决策: {str(e)}",
+                "streaming": False
+            })
+            default = {
+                "task_type": "complex",
+                "reason": "路由失败，默认复杂任务",
+                "need_memory": True,
+                "skip_research": False,
+                "skip_validate": False,
+                "skip_summary": False,
+                "agent_level": "expert",
+                "response_style": "detailed"
+            }
+            return {
+                "task_type": "complex",
+                "route_decision": default
+            }
 
     def _run_crew_with_stream(self, crew: Crew, task_id: str, agent_name: str) -> str:
         import sys
@@ -283,22 +384,57 @@ class StreamingWorkflow:
         task = state["task"]
         result = state.get("final_report", "")
         task_id = state.get("task_id", "unknown")
+        task_type = state.get("task_type", "task")
 
         short_term_memory.add(session_id, "user", task)
         short_term_memory.add(session_id, "assistant", result)
 
-        if state.get("task_type") == "task":
-            try:
+        token_count = short_term_memory.get_token_count(session_id)
+        if token_count > 500:
+            short_term_memory.compress_context(session_id, compress_threshold=15)
+
+        try:
+            if task_type == "task":
                 memory.add_memory(
                     user_id=user_id,
                     content=f"用户需求：{task}\n执行结果：{result}",
                     memory_type="task",
                     metadata={"task_id": task_id}
                 )
-            except Exception:
-                pass
+            else:
+                memory.add_memory(
+                    user_id=user_id,
+                    content=f"用户：{task}\n助手：{result}",
+                    memory_type="conversation",
+                    metadata={"session_id": session_id}
+                )
+        except Exception:
+            pass
 
         return {}
+
+    def _route_decision(self, state: StreamingAgentState) -> str:
+        task_type = state.get("task_type", "complex")
+        route_decision = state.get("route_decision", {})
+        skip_research = route_decision.get("skip_research", False)
+        skip_validate = route_decision.get("skip_validate", False)
+
+        if task_type == "chat":
+            return "chat"
+        elif task_type == "question":
+            return "execute_direct"
+        elif task_type == "simple":
+            if skip_research:
+                return "execute_skip_research"
+            return "research"
+        else:
+            if skip_research:
+                if skip_validate:
+                    return "execute_skip_research_validate"
+                return "execute_skip_research"
+            if skip_validate:
+                return "execute_skip_validate"
+            return "research"
 
     def build_workflow(self):
         from langgraph.graph import StateGraph, END
@@ -310,6 +446,10 @@ class StreamingWorkflow:
         wf.add_node("chat", self.chat_node)
         wf.add_node("research", self.research_node)
         wf.add_node("execute", self.execute_node)
+        wf.add_node("execute_direct", self.execute_direct_node)
+        wf.add_node("execute_skip_research", self.execute_skip_research_node)
+        wf.add_node("execute_skip_research_validate", self.execute_skip_research_validate_node)
+        wf.add_node("execute_skip_validate", self.execute_skip_validate_node)
         wf.add_node("validate", self.validate_node)
         wf.add_node("manager", self.manager_node)
         wf.add_node("save_memory", self.save_memory_node)
@@ -319,14 +459,22 @@ class StreamingWorkflow:
 
         wf.add_conditional_edges(
             "route",
-            lambda state: state.get("task_type", "task"),
+            self._route_decision,
             {
                 "chat": "chat",
-                "task": "research"
+                "execute_direct": "execute_direct",
+                "execute_skip_research": "execute_skip_research",
+                "execute_skip_research_validate": "execute_skip_research_validate",
+                "execute_skip_validate": "execute_skip_validate",
+                "research": "research"
             }
         )
 
         wf.add_edge("chat", "save_memory")
+        wf.add_edge("execute_direct", "manager")
+        wf.add_edge("execute_skip_research", "validate")
+        wf.add_edge("execute_skip_research_validate", "manager")
+        wf.add_edge("execute_skip_validate", "manager")
         wf.add_edge("research", "execute")
         wf.add_edge("execute", "validate")
         wf.add_edge("validate", "manager")
@@ -334,6 +482,140 @@ class StreamingWorkflow:
         wf.add_edge("save_memory", END)
 
         return wf.compile()
+
+    async def execute_direct_node(self, state: StreamingAgentState) -> Dict:
+        from app.agent.agents import executor
+
+        short_term_context = state.get("short_term_context", "")
+        memories_context = state.get("related_memories", [""])[0]
+        task_id = state.get("task_id", "unknown")
+        task = state["task"]
+        route_decision = state.get("route_decision", {})
+
+        await self.send_func(task_id, "agent_start", "executor", {
+            "role": "💡 直接回答",
+            "content": "正在分析问题..."
+        })
+
+        prompt = f"""{short_term_context}
+
+{memories_context}
+
+用户问题：{task}
+
+请直接回答用户的问题。如果需要可结合记忆中的上下文信息。"""
+
+        simple_task = _get_task_factory().create(
+            "execute_task",
+            short_term_context=short_term_context,
+            related_memories=memories_context,
+            research_result=prompt
+        )
+        crew = Crew(agents=[executor], tasks=[simple_task], verbose=False)
+
+        loop = asyncio.get_event_loop()
+        result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
+
+        await self.send_func(task_id, "agent_end", "executor", {"role": "💡 直接回答", "content": result_text})
+        return {"final_report": result_text}
+
+    async def execute_skip_research_node(self, state: StreamingAgentState) -> Dict:
+        from app.agent.agents import executor
+
+        short_term_context = state.get("short_term_context", "")
+        memories_context = state.get("related_memories", [""])[0]
+        task_id = state.get("task_id", "unknown")
+        task = state["task"]
+
+        await self.send_func(task_id, "agent_start", "executor", {
+            "role": "⚡ 快速执行",
+            "content": "跳过研究阶段，直接执行..."
+        })
+
+        prompt = f"""{short_term_context}
+
+{memories_context}
+
+用户需求：{task}
+
+请直接执行任务，不需要额外研究。"""
+
+        simple_task = _get_task_factory().create(
+            "execute_task",
+            short_term_context=short_term_context,
+            related_memories=memories_context,
+            research_result=prompt
+        )
+        crew = Crew(agents=[executor], tasks=[simple_task], verbose=False)
+
+        loop = asyncio.get_event_loop()
+        result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
+
+        await self.send_func(task_id, "agent_end", "executor", {"role": "⚡ 快速执行", "content": result_text})
+        return {"execute_result": result_text}
+
+    async def execute_skip_research_validate_node(self, state: StreamingAgentState) -> Dict:
+        from app.agent.agents import executor, manager
+
+        short_term_context = state.get("short_term_context", "")
+        memories_context = state.get("related_memories", [""])[0]
+        task_id = state.get("task_id", "unknown")
+        task = state["task"]
+
+        await self.send_func(task_id, "agent_start", "executor", {
+            "role": "⚡ 快速执行",
+            "content": "直接执行并汇总结果..."
+        })
+
+        prompt = f"""{short_term_context}
+
+{memories_context}
+
+用户需求：{task}
+
+请直接执行任务并输出最终结果。"""
+
+        simple_task = _get_task_factory().create(
+            "execute_task",
+            short_term_context=short_term_context,
+            related_memories=memories_context,
+            research_result=prompt
+        )
+        crew = Crew(agents=[executor], tasks=[simple_task], verbose=False)
+
+        loop = asyncio.get_event_loop()
+        result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
+
+        await self.send_func(task_id, "agent_end", "executor", {"role": "⚡ 快速执行", "content": result_text})
+        return {"execute_result": result_text, "final_report": result_text}
+
+    async def execute_skip_validate_node(self, state: StreamingAgentState) -> Dict:
+        from app.agent.agents import executor
+
+        short_term_context = state.get("short_term_context", "")
+        memories_context = state.get("related_memories", [""])[0]
+        task_id = state.get("task_id", "unknown")
+        research_result = state.get("research_result", "")
+
+        await self.send_func(task_id, "agent_start", "executor", {
+            "role": "⚙️ 执行任务",
+            "content": "执行中（跳过验证）..."
+        })
+
+        task = _get_task_factory().create(
+            "execute_task",
+            short_term_context=short_term_context,
+            related_memories=memories_context,
+            research_result=research_result
+        )
+
+        crew = Crew(agents=[executor], tasks=[task], verbose=False)
+
+        loop = asyncio.get_event_loop()
+        result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
+
+        await self.send_func(task_id, "agent_end", "executor", {"role": "⚙️ 执行任务", "content": result_text})
+        return {"execute_result": result_text}
 
 
 async def run_streaming_task(task_id: str, task_content: str, user_id: str, send_func,

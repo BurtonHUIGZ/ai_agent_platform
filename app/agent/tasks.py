@@ -1,13 +1,16 @@
 from crewai import Task
 import yaml
+import os
 
 def load_prompts():
-    with open("./config/prompts.yaml", "r", encoding="utf-8") as f:
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(base_dir, "config", "prompts.yaml"), "r", encoding="utf-8") as f:
         return yaml.safe_load(f)["prompts"]
 
 
 def load_task_configs():
-    with open("./config/tasks.yaml", "r", encoding="utf-8") as f:
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(base_dir, "config", "tasks.yaml"), "r", encoding="utf-8") as f:
         return yaml.safe_load(f)["tasks"]
 
 

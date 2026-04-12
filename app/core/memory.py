@@ -38,6 +38,21 @@ class ShortTermMemory:
     def clear_all(self):
         self.history = {}
 
+    def get_token_count(self, session_id: str) -> int:
+        messages = self.history.get(session_id, [])
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            total += len(content)
+        return total
+
+    def compress_context(self, session_id: str, compress_threshold: int = 15):
+        if session_id in self.history:
+            messages = self.history[session_id]
+            if len(messages) > compress_threshold:
+                keep = messages[-compress_threshold:]
+                self.history[session_id] = keep
+
 
 short_term_memory = ShortTermMemory()
 

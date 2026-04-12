@@ -1,4 +1,30 @@
 prompts:
+  route: |
+    用户输入：{task}
+    
+    请分析用户意图和任务复杂度，直接返回 JSON 格式的路由决策（不要有其他内容）：
+    {{
+      "task_type": "chat",
+      "reason": "判断理由",
+      "need_memory": false,
+      "skip_research": true,
+      "skip_validate": true,
+      "skip_summary": true,
+      "agent_level": "simple",
+      "response_style": "brief"
+    }}
+    
+    【重要】
+    1. JSON 的键名必须使用英文
+    2. task_type 必须选择具体值：chat 或 simple 或 complex 或 question
+    3. reason 简要说明判断理由
+    
+    任务类型说明：
+    - chat: 闲聊、问候、简单寒暄，无需执行具体任务
+    - simple: 简单明确的任务，可直接执行
+    - complex: 复杂任务，需要研究、分析、多步骤
+    - question: 问答类，可以直接检索回答
+
   research: |
     {short_term_context}
 
@@ -6,7 +32,7 @@ prompts:
 
     用户需求：{task}
 
-    请分析需求并给出执行方案。
+    请分析需求并给出执行方案。如需补充信息可合理推断。
 
   execute: |
     {short_term_context}
@@ -21,11 +47,11 @@ prompts:
     用户需求：{task}
     执行结果：{execute_result}
 
-    请校验结果是否满足需求。
+    请校验结果是否满足需求，给出反馈。
 
   summarize: |
     用户需求：{task}
     执行结果：{execute_result}
     校验结果：{validate_result}
 
-    请输出最终答案。
+    请整合输出最终答案。
