@@ -406,11 +406,26 @@ class StreamingWorkflow:
             short_term_memory.compress_context(session_id, compress_threshold=15)
 
         try:
-            if task_type == "task":
+            task_type_to_memory_type = {
+                "complex": "task",
+                "simple": "task",
+                "question": "question",
+                "chat": "conversation"
+            }
+            memory_type = task_type_to_memory_type.get(task_type, "conversation")
+            
+            if memory_type == "task":
                 memory.add_memory(
                     user_id=user_id,
                     content=f"用户需求：{task}\n执行结果：{result}",
                     memory_type="task",
+                    metadata={"task_id": task_id, "original_task_type": task_type}
+                )
+            elif memory_type == "question":
+                memory.add_memory(
+                    user_id=user_id,
+                    content=f"用户问题：{task}\n回答：{result}",
+                    memory_type="question",
                     metadata={"task_id": task_id}
                 )
             else:
@@ -418,7 +433,7 @@ class StreamingWorkflow:
                     user_id=user_id,
                     content=f"用户：{task}\n助手：{result}",
                     memory_type="conversation",
-                    metadata={"session_id": session_id}
+                    metadata={"session_id": session_id, "original_task_type": task_type}
                 )
         except Exception:
             pass

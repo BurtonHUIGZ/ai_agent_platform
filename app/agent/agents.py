@@ -1,6 +1,9 @@
 import os
 import yaml
+
 from crewai import Agent
+from crewai.tools.base_tool import Tool
+from pydantic import BaseModel
 
 config = None
 provider = None
@@ -26,11 +29,18 @@ from app.llm.model_factory import llm
 from app.core.memory import memory
 
 
+class SearchKnowledgeBaseInput(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+class SearchUserMemoryInput(BaseModel):
+    query: str
+
+
 def _create_rag_tools():
-    from langchain_core.tools import tool
     
-    @tool
-    def search_knowledge_base(query: str, top_k: int = 5) -> str:
+    def _search_knowledge_base(query: str, top_k: int = 5) -> str:
         """搜索知识库获取相关信息"""
         try:
             results = memory.retrieve_memories(user_id="default", query=query, top_k=top_k)
@@ -40,8 +50,7 @@ def _create_rag_tools():
         except Exception as e:
             return f"检索失败: {e}"
     
-    @tool
-    def search_user_memory(query: str) -> str:
+    def _search_user_memory(query: str) -> str:
         """搜索用户历史记忆和偏好"""
         try:
             results = memory.retrieve_memories(user_id="default", query=query, memory_type="preference", top_k=3)
@@ -51,7 +60,21 @@ def _create_rag_tools():
         except Exception as e:
             return f"检索失败: {e}"
     
-    return [search_knowledge_base, search_user_memory]
+    search_kb_tool = Tool(
+        name="search_knowledge_base",
+        description="搜索知识库获取相关信息。当用户询问需要查找特定信息、文档、政策、指南等内容时使用。",
+        func=_search_knowledge_base,
+        args_schema=SearchKnowledgeBaseInput,
+    )
+    
+    search_mem_tool = Tool(
+        name="search_user_memory",
+        description="搜索用户历史记忆和偏好。用于获取用户的偏好设置、历史交互记录等信息。",
+        func=_search_user_memory,
+        args_schema=SearchUserMemoryInput,
+    )
+    
+    return [search_kb_tool, search_mem_tool]
 
 
 def load_agents():
@@ -59,8 +82,14 @@ def load_agents():
     with open(os.path.join(base_dir, "config", "agents.yaml"), "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
+    rag_tools = _create_rag_tools()
+    
     agents = {}
     for name, agent_cfg in cfg["agents"].items():
+        agent_tools = []
+        if name in ["researcher", "executor"]:
+            agent_tools = rag_tools
+        
         agents[name] = Agent(
             role=agent_cfg["role"],
             goal=agent_cfg["goal"],
@@ -69,7 +98,7 @@ def load_agents():
             verbose=agent_cfg.get("verbose", True),
             memory=False,
             allow_delegation=agent_cfg.get("allow_delegation", True),
-            tools=[],
+            tools=agent_tools,
         )
     return agents
 
