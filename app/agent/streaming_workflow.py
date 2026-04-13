@@ -8,7 +8,9 @@ from crewai import Crew, Agent
 from app.agent.tasks import TASK_CONFIGS
 from app.agent.agents import agents
 from app.core.memory import memory, short_term_memory
+from app.core.rag_tools import search_knowledge_base
 from app.llm.model_factory import llm, debug_llm_env
+from app.settings import settings
 
 print(f"[DEBUG LLM ENV] {debug_llm_env()}")
 
@@ -16,6 +18,16 @@ print(f"[DEBUG LLM ENV] {debug_llm_env()}")
 def _get_task_factory():
     from app.agent.tasks import TaskFactory
     return TaskFactory(agents)
+
+
+def _get_executor():
+    from app.agent.agents import executor
+    return executor
+
+
+def load_prompts():
+    from app.agent.tasks import load_prompts
+    return load_prompts()
 
 
 class RouteDecision(TypedDict):
@@ -422,7 +434,7 @@ class StreamingWorkflow:
         if task_type == "chat":
             return "chat"
         elif task_type == "question":
-            return "execute_direct"
+            return "rag_vote"
         elif task_type == "simple":
             if skip_research:
                 return "execute_skip_research"
@@ -444,6 +456,7 @@ class StreamingWorkflow:
         wf.add_node("recall", self.recall_memories_node)
         wf.add_node("route", self.route_node)
         wf.add_node("chat", self.chat_node)
+        wf.add_node("rag_vote", self.rag_vote_node)
         wf.add_node("research", self.research_node)
         wf.add_node("execute", self.execute_node)
         wf.add_node("execute_direct", self.execute_direct_node)
@@ -462,6 +475,7 @@ class StreamingWorkflow:
             self._route_decision,
             {
                 "chat": "chat",
+                "rag_vote": "rag_vote",
                 "execute_direct": "execute_direct",
                 "execute_skip_research": "execute_skip_research",
                 "execute_skip_research_validate": "execute_skip_research_validate",
@@ -471,7 +485,15 @@ class StreamingWorkflow:
         )
 
         wf.add_edge("chat", "save_memory")
-        wf.add_edge("execute_direct", "manager")
+        wf.add_edge("rag_vote", "save_memory")
+        wf.add_conditional_edges(
+            "execute_direct",
+            lambda state: "manager" if state.get("route_decision", {}).get("skip_validate", False) else "validate",
+            {
+                "validate": "validate",
+                "manager": "manager"
+            }
+        )
         wf.add_edge("execute_skip_research", "validate")
         wf.add_edge("execute_skip_research_validate", "manager")
         wf.add_edge("execute_skip_validate", "manager")
@@ -491,6 +513,13 @@ class StreamingWorkflow:
         task_id = state.get("task_id", "unknown")
         task = state["task"]
         route_decision = state.get("route_decision", {})
+        
+        skip_validate = route_decision.get("skip_validate", False)
+        agent_level = route_decision.get("agent_level", "expert")
+        response_style = route_decision.get("response_style", "detailed")
+
+        style_hint = "简洁" if response_style == "brief" else "详细"
+        level_hint = "使用简单易懂的语言" if agent_level == "simple" else "可以使用专业术语"
 
         await self.send_func(task_id, "agent_start", "executor", {
             "role": "💡 直接回答",
@@ -503,7 +532,7 @@ class StreamingWorkflow:
 
 用户问题：{task}
 
-请直接回答用户的问题。如果需要可结合记忆中的上下文信息。"""
+请回答用户问题。{level_hint}。回答风格：{style_hint}。"""
 
         simple_task = _get_task_factory().create(
             "execute_task",
@@ -517,7 +546,105 @@ class StreamingWorkflow:
         result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
 
         await self.send_func(task_id, "agent_end", "executor", {"role": "💡 直接回答", "content": result_text})
-        return {"final_report": result_text}
+        
+        if skip_validate:
+            return {"final_report": result_text}
+        return {"execute_result": result_text}
+
+    async def rag_vote_node(self, state: StreamingAgentState) -> Dict:
+        task = state["task"]
+        task_id = state.get("task_id", "unknown")
+
+        await self.send_func(task_id, "thinking", "router", {
+            "content": "🔍 多路检索+投票中...",
+            "streaming": False
+        })
+
+        try:
+            rag_result = search_knowledge_base.invoke(task)
+        except Exception:
+            rag_result = "检索失败"
+
+        try:
+            executor = _get_executor()
+            web_prompt = f"请搜索网络回答用户问题：{task}"
+            simple_task = _get_task_factory().create(
+                "execute_task",
+                short_term_context="",
+                related_memories="",
+                research_result=web_prompt
+            )
+            crew = Crew(agents=[executor], tasks=[simple_task], verbose=False)
+            loop = asyncio.get_event_loop()
+            web_result = await loop.run_in_executor(None, lambda: crew.kickoff())
+        except Exception as e:
+            web_result = f"搜索失败: {e}"
+
+        try:
+            executor = _get_executor()
+            direct_prompt = f"请直接回答用户问题：{task}"
+            simple_task = _get_task_factory().create(
+                "execute_task",
+                short_term_context="",
+                related_memories="",
+                research_result=direct_prompt
+            )
+            crew = Crew(agents=[executor], tasks=[simple_task], verbose=False)
+            loop = asyncio.get_event_loop()
+            direct_result = await loop.run_in_executor(None, lambda: crew.kickoff())
+        except Exception as e:
+            direct_result = f"回答失败: {e}"
+
+        prompts = load_prompts()
+        vote_prompt = prompts.get("route_question", "").format(
+            rag_result=rag_result,
+            web_result=str(web_result),
+            direct_result=str(direct_result),
+            task=task
+        )
+
+        try:
+            loop = asyncio.get_event_loop()
+            if settings.ACTIVE_PROVIDER == "OLLAMA":
+                from langchain_core.messages import HumanMessage
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: llm.invoke([HumanMessage(content=vote_prompt)])
+                )
+                vote_result = response.content if hasattr(response, 'content') else str(response)
+            else:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: llm.call(vote_prompt)
+                )
+                vote_result = response.content if hasattr(response, 'content') else str(response)
+        except Exception as e:
+            vote_result = f"投票失败: {e}"
+
+        import re
+        import json
+        winner = "rag"
+        try:
+            json_match = re.search(r'\{[^{}]*\}', vote_result, re.DOTALL)
+            if json_match:
+                vote_data = json.loads(json_match.group())
+                winner = vote_data.get("winner", "rag")
+        except Exception:
+            pass
+
+        await self.send_func(task_id, "thinking", "router", {
+            "content": f"✅ 投票结果: {winner}",
+            "streaming": False
+        })
+
+        if winner == "web":
+            final_result = str(web_result)
+        elif winner == "direct":
+            final_result = str(direct_result)
+        else:
+            final_result = rag_result
+
+        return {"final_report": final_result}
 
     async def execute_skip_research_node(self, state: StreamingAgentState) -> Dict:
         from app.agent.agents import executor

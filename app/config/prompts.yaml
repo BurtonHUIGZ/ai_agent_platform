@@ -6,12 +6,12 @@ prompts:
     {{
       "task_type": "chat",
       "reason": "判断理由",
-      "need_memory": false,
-      "skip_research": true,
-      "skip_validate": true,
-      "skip_summary": true,
-      "agent_level": "simple",
-      "response_style": "brief"
+      "need_memory": true,
+      "skip_research": false,
+      "skip_validate": false,
+      "skip_summary": false,
+      "agent_level": "expert",
+      "response_style": "detailed"
     }}
     
     【重要】
@@ -20,10 +20,26 @@ prompts:
     3. reason 简要说明判断理由
     
     任务类型说明：
-    - chat: 闲聊、问候、简单寒暄，无需执行具体任务
-    - simple: 简单明确的任务，可直接执行
-    - complex: 复杂任务，需要研究、分析、多步骤
-    - question: 问答类，可以直接检索回答
+    - chat: 闲聊、问候、简单寒暄，无需执行具体任务（skip_research=true, skip_validate=true）
+    - simple: 简单明确的任务，可直接执行（skip_research可配置）
+    - complex: 复杂任务，需要研究、分析、多步骤（skip_research=false, skip_validate=false）
+    - question: 问答类、查询类、信息检索类任务，优先检索知识库和记忆
+
+  route_question: |
+    用户问题：{task}
+    
+    你是一个投票决策专家。需要从以下3个方案中选择最优答案：
+    1. 知识库检索结果：{rag_result}
+    2. 网络搜索结果：{web_result}
+    3. 直接回答：{direct_result}
+    
+    请从准确性、相关性、完整性三个维度评估每个方案，然后投票选择最优方案。
+    返回格式：
+    {{
+      "winner": "rag" | "web" | "direct",
+      "reason": "选择理由",
+      "confidence": 0.0-1.0
+    }}
 
   research: |
     {short_term_context}
