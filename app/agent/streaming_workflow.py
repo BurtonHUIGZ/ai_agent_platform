@@ -464,27 +464,92 @@ class StreamingWorkflow:
             return "research"
 
     def build_workflow(self):
+        """
+        构建 LangGraph 状态图工作流。
+
+        工作流节点:
+        - recall: 回忆相关记忆
+        - route: 根据任务类型路由到不同处理路径
+        - chat: 对话模式 (简单问答)
+        - rag_vote: RAG检索模式 (知识库查询)
+        - research: 研究模式 (需要搜索外部信息)
+        - execute: 执行模式 (代码执行)
+        - execute_direct: 直接执行 (无需研究，直接执行)
+        - execute_skip_research: 跳过研究执行
+        - execute_skip_research_validate: 跳过研究验证执行
+        - execute_skip_validate: 跳过验证执行
+        - validate: 验证执行结果
+        - manager: 管理执行结果
+        - save_memory: 保存对话记忆
+
+        工作流执行流程:
+        1. recall -> route: 加载记忆并路由
+        2. route 根据任务类型选择:
+           - chat: 对话模式
+           - rag_vote: RAG检索
+           - execute_direct: 直接执行
+           - execute_skip_research: 跳过研究执行
+           - execute_skip_research_validate: 跳过研究验证执行
+           - execute_skip_validate: 跳过验证执行
+           - research: 研究后执行
+        3. 执行完成后进行验证
+        4. manager 处理结果
+        5. save_memory 保存记忆
+        """
         from langgraph.graph import StateGraph, END
 
+        # 创建状态图，使用 StreamingAgentState 作为状态类型
+        # StateGraph 是 LangGraph 的核心类，用于构建有向无环图 (DAG)
         wf = StateGraph(StreamingAgentState)
 
+        # add_node(name, handler): 添加节点到图中
+        # - name: 节点名称（字符串），用于标识和引用该节点
+        # - handler: 节点的处理函数（async 函数），接收当前状态并返回更新后的状态
+        # 节点是工作流中的基本执行单元，每个节点处理特定的任务
+        # recall: 检索相关记忆
         wf.add_node("recall", self.recall_memories_node)
+        # route: 路由决策，判断任务类型
         wf.add_node("route", self.route_node)
+        # chat: 对话模式，处理简单问答
         wf.add_node("chat", self.chat_node)
+        # rag_vote: RAG检索模式，从知识库获取信息
         wf.add_node("rag_vote", self.rag_vote_node)
+        # research: 研究模式，搜索外部信息
         wf.add_node("research", self.research_node)
+        # execute: 执行模式，运行代码
         wf.add_node("execute", self.execute_node)
+        # execute_direct: 直接执行模式，无需研究
         wf.add_node("execute_direct", self.execute_direct_node)
+        # execute_skip_research: 跳过研究直接执行
         wf.add_node("execute_skip_research", self.execute_skip_research_node)
+        # execute_skip_research_validate: 跳过研究验证执行
         wf.add_node("execute_skip_research_validate", self.execute_skip_research_validate_node)
+        # execute_skip_validate: 跳过验证执行
         wf.add_node("execute_skip_validate", self.execute_skip_validate_node)
+        # validate: 验证执行结果
         wf.add_node("validate", self.validate_node)
+        # manager: 管理执行结果
         wf.add_node("manager", self.manager_node)
+        # save_memory: 保存对话记忆
         wf.add_node("save_memory", self.save_memory_node)
 
+        # set_entry_point(name): 设置工作流的入口节点
+        # 工作流从该节点开始执行
         wf.set_entry_point("recall")
+
+        # add_edge(source, target): 添加普通边，连接两个节点
+        # - source: 源节点名称
+        # - target: 目标节点名称
+        # 表示从源节点执行完毕后，无条件转移到目标节点
+        # recall 执行完后进入 route 节点
         wf.add_edge("recall", "route")
 
+        # add_conditional_edges(source, condition_fn, mapping): 添加条件边
+        # - source: 源节点名称
+        # - condition_fn: 条件函数，接收当前状态，返回路由目标（mapping 中的某个 key）
+        # - mapping: 路由目标映射表 {返回值: 目标节点名, ...}
+        # 根据条件函数的返回值，决定下一步流向哪个节点
+        # route 节点根据 _route_decision 返回值进行条件路由
         wf.add_conditional_edges(
             "route",
             self._route_decision,
@@ -499,8 +564,11 @@ class StreamingWorkflow:
             }
         )
 
+        # chat 和 rag_vote 完成后保存记忆
         wf.add_edge("chat", "save_memory")
         wf.add_edge("rag_vote", "save_memory")
+
+        # execute_direct 根据 skip_validate 决定是否验证
         wf.add_conditional_edges(
             "execute_direct",
             lambda state: "manager" if state.get("route_decision", {}).get("skip_validate", False) else "validate",
@@ -509,13 +577,23 @@ class StreamingWorkflow:
                 "manager": "manager"
             }
         )
+
+        # 其他执行路径的边
+        # execute_skip_research: 验证后管理
         wf.add_edge("execute_skip_research", "validate")
+        # execute_skip_research_validate: 直接到管理
         wf.add_edge("execute_skip_research_validate", "manager")
+        # execute_skip_validate: 直接到管理
         wf.add_edge("execute_skip_validate", "manager")
+        # research: 研究后执行
         wf.add_edge("research", "execute")
+        # execute: 执行后验证
         wf.add_edge("execute", "validate")
+        # validate: 验证后管理
         wf.add_edge("validate", "manager")
+        # manager: 管理后保存记忆
         wf.add_edge("manager", "save_memory")
+        # save_memory: 结束工作流
         wf.add_edge("save_memory", END)
 
         return wf.compile()
