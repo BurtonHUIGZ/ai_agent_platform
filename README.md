@@ -513,3 +513,230 @@ python -m app.main
 ```
 
 访问 http://127.0.0.1:8718
+
+---
+
+## 设计思路与问题解决
+
+### 一、核心设计思路
+
+#### 1. Agent 分层架构
+
+```python
+# app/agent/agents.py - Agent 定义
+router      → 意图识别，判断任务类型
+researcher → 需求分析，生成执行方案
+executor   → 任务执行，产出最终结果
+validator  → 结果校验，确保质量
+manager    → 报告汇总，整合输出
+```
+
+**设计理由**：
+- 每个 Agent 单一职责，降低复杂度
+- 通过 LangGraph 的条件路由动态组合
+- 支持跳过某些阶段（skip_research/skip_validate）提升效率
+
+#### 2. Prompt 与任务配置分离
+
+```yaml
+# app/config/prompts.yaml - Prompt 模板
+prompts:
+  route: |      # 路由 Prompt
+    用户输入：{task}
+    ...
+  research: |
+    {short_term_context}
+    {related_memories}
+    用户需求：{task}
+```
+
+```yaml
+# app/config/tasks.yaml - 任务配置
+tasks:
+  research_task:
+    agent: researcher
+    prompt_key: research
+```
+
+**设计理由**：
+- Prompt 作为字符串模板，通过 `format()` 动态注入上下文
+- Task 配置映射 Agent 和 Prompt，便于管理
+- 不修改代码即可调整 Prompt
+
+---
+
+### 二、遇到的问题与解决方案
+
+#### 问题 1：LLM 输出 JSON 解析失败
+
+**现象**：Router Agent 返回的 JSON 格式不标准，包含噪点字符。
+
+**解决**：正则表达式提取 + 多键名兼容
+
+```python
+# app/agent/streaming_workflow.py:68-114
+def _parse_route_decision(self, raw_output: str) -> RouteDecision:
+    # 1. 正则提取 JSON
+    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw_output, re.DOTALL)
+    if json_match:
+        decision = json.loads(json_match.group())
+    
+    # 2. 多键名兼容（中文/英文）
+    key_map = {
+        "task_type": ["task_type", "task_类型", "类型"],
+        "need_memory": ["need_memory", "需要内存", "需要记忆"],
+    }
+```
+
+#### 问题 2：CrewAI 流式输出无法捕获
+
+**现象**：Crew 的 `kickoff()` 是同步阻塞调用，无法获取流式 token。
+
+**解决**：重定向 stdout + asyncio 异步执行
+
+```python
+# app/agent/streaming_workflow.py:210-245
+class StreamBuffer:
+    def write(self, text):
+        if text.strip():
+            asyncio.create_task(self.send_func(self.tid, "thinking", self.agent, {
+                "content": text,
+                "streaming": True
+            }))
+
+# 使用
+stream = StreamBuffer(self.send_func, task_id, agent_name)
+old_stdout = sys.stdout
+sys.stdout = stream
+result = crew.kickoff()
+sys.stdout = old_stdout
+```
+
+#### 问题 3：Ollama 异步调用兼容
+
+**现象**：Ollama 的 API 接口与 OpenAI 兼容模式不同，直接调用会报错。
+
+**解决**：根据 Provider 动态选择调用方式
+
+```python
+# app/agent/streaming_workflow.py:157-173
+if settings.ACTIVE_PROVIDER == "OLLAMA":
+    from langchain_core.messages import HumanMessage
+    response = await loop.run_in_executor(
+        None,
+        lambda: llm.invoke([HumanMessage(content=route_prompt)])
+    )
+else:
+    response = await loop.run_in_executor(
+        None,
+        lambda: llm.call(route_prompt)
+    )
+```
+
+#### 问题 4：短期记忆无限膨胀
+
+**现象**：会话上下文持续增长，超出 LLM 上下文窗口。
+
+**解决**：Token 阈值触发压缩
+
+```python
+# app/agent/streaming_workflow.py:404-406
+token_count = short_term_memory.get_token_count(session_id)
+if token_count > 500:
+    short_term_memory.compress_context(session_id, compress_threshold=15)
+```
+
+```python
+# app/core/memory.py:49-54
+def compress_context(self, session_id: str, compress_threshold: int = 15):
+    messages = self.history[session_id]
+    if len(messages) > compress_threshold:
+        keep = messages[-compress_threshold:]
+        self.history[session_id] = keep
+```
+
+#### 问题 5：多 Provider 切换
+
+**现象**：不同 Provider（阿里云百炼 / Ollama）的 API 接口不同。
+
+**解决**：统一适配层 + 模型工厂
+
+```python
+# app/llm/model_factory.py:34-56
+class ModelFactory:
+    @staticmethod
+    def get_llm(temperature: float = None):
+        if provider == "OLLAMA":
+            return ChatOllama(
+                model=config["model"],
+                base_url=config["base_url"],
+                ...
+            )
+        else:
+            return CrewAILLM(
+                model=model_name,
+                base_url=config["base_url"],
+                provider="litellm"
+            )
+```
+
+#### 问题 6：任务路由决策不准确
+
+**现象**：简单任务被路由到复杂流程，导致响应慢。
+
+**解决**：Router Prompt 引导 + 决策参数精细化
+
+```yaml
+# app/config/prompts.yaml
+route: |
+  【重要】
+  - chat: 闲聊、问候（skip_research=true, skip_validate=true）
+  - simple: 简单任务（skip_research可配置）
+  - complex: 复杂任务（完整流程）
+  - question: 问答类（多路检索）
+```
+
+---
+
+### 三、关键设计亮点
+
+| 特性 | 实现方式 | 收益 |
+|------|---------|------|
+| **智能路由** | Router Agent 判断 task_type | 减少不必要流程，提升响应速度 |
+| **多路检索+投票** | RAG + Web + Direct 三路并行 | 问答类问题准确率提升 |
+| **记忆系统** | ShortTermMemory + LongTermMemory | 上下文连贯性 |
+| **流式输出** | Stdout 重定向 + WebSocket | 实时展示执行进度 |
+| **条件边** | LangGraph add_conditional_edges | 灵活的工作流分支 |
+| **多 Provider** | LiteLLM 统一接口 | 自由切换模型 |
+
+---
+
+### 四、代码架构图
+
+```
+app/agent/
+├── agents.py          # Agent 定义 + RAG Tools
+├── tasks.py         # TaskFactory + Prompt 加载
+└── streaming_workflow.py  # LangGraph 工作流 (12 节点)
+
+app/core/
+├── memory.py        # ShortTermMemory + LongTermMemory
+└── rag_tools.py   # RAG 工具
+
+app/llm/
+└── model_factory.py  # 模型工厂
+
+app/config/
+├── agents.yaml     # Agent 角色配置
+├── tasks.yaml     # 任务配置
+└── prompts.yaml  # Prompt 模板
+```
+
+---
+
+### 五、后续优化方向
+
+1. **Agent 并行执行**：research + execute 可并行，减少总耗时
+2. **缓存机制**：重复任务结果缓存，避免重复执行
+3. **监控指标**：任务耗时、成功率等 metrics 采集
+4. **多模态支持**：扩展 RAG 工具支持图片、文件
