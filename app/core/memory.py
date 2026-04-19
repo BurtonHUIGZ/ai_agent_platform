@@ -7,6 +7,14 @@ from collections import OrderedDict
 
 from app.settings import CHROMA_PATH
 
+MAX_EMBEDDING_TOKENS = 2000
+
+
+def estimate_tokens(text: str) -> int:
+    chinese = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    others = len(text) - chinese
+    return chinese + others // 4 * 3
+
 
 class ShortTermMemory:
     def __init__(self, max_size: int = 20):
@@ -109,14 +117,24 @@ class LongTermMemory:
             "created_at": datetime.now().isoformat()
         })
 
-        embedding = self._get_embedding(content)
+        try:
+            embedding = self._get_embedding(content)
+            print(f"[LongTermMemory] 获取embedding成功, content长度={len(content)}, embedding维度={len(embedding)}")
+        except Exception as e:
+            print(f"[LongTermMemory] 获取embedding失败: {e}")
+            raise
 
-        self.collection.add(
-            ids=[memory_id],
-            embeddings=[embedding],
-            documents=[content],
-            metadatas=[metadata]
-        )
+        try:
+            self.collection.add(
+                ids=[memory_id],
+                embeddings=[embedding],
+                documents=[content],
+                metadatas=[metadata]
+            )
+            print(f"[LongTermMemory] 已添加到collection, id={memory_id}")
+        except Exception as e:
+            print(f"[LongTermMemory] collection.add失败: {e}")
+            raise
 
         return memory_id
 

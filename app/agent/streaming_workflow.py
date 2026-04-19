@@ -2,15 +2,18 @@ import asyncio
 import json
 import re
 import os
+import time
 from typing import Dict, Any, List, TypedDict, Optional
 from crewai import Crew, Agent
 
 from app.agent.tasks import TASK_CONFIGS
 from app.agent.agents import agents
-from app.core.memory import memory, short_term_memory
+from app.core.memory import memory, short_term_memory, MAX_EMBEDDING_TOKENS, estimate_tokens
 from app.core.rag_tools import search_knowledge_base
 from app.llm.model_factory import llm, debug_llm_env
+from langchain_core.messages import HumanMessage
 from app.settings import settings
+from app.core.metrics import metrics
 
 print(f"[DEBUG LLM ENV] {debug_llm_env()}")
 
@@ -247,6 +250,7 @@ class StreamingWorkflow:
     async def chat_node(self, state: StreamingAgentState) -> Dict:
         from app.agent.agents import executor
 
+        start_time = time.time()
         short_term_context = state.get("short_term_context", "")
         memories_context = state.get("related_memories", [""])[0]
         task_id = state.get("task_id", "unknown")
@@ -277,11 +281,14 @@ class StreamingWorkflow:
         result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
 
         await self.send_func(task_id, "agent_end", "executor", {"role": "💬 助手", "content": result_text})
+        duration = time.time() - start_time
+        metrics.record_agent("chat", duration)
         return {"final_report": result_text}
 
     async def research_node(self, state: StreamingAgentState) -> Dict:
         from app.agent.agents import researcher
 
+        start_time = time.time()
         short_term_context = state.get("short_term_context", "")
         memories_context = state.get("related_memories", [""])[0]
         task_id = state.get("task_id", "unknown")
@@ -305,11 +312,14 @@ class StreamingWorkflow:
         result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "researcher"))
 
         await self.send_func(task_id, "agent_end", "researcher", {"role": cfg["role_zh"], "content": result_text})
+        duration = time.time() - start_time
+        metrics.record_agent("researcher", duration)
         return {"research_result": result_text}
 
     async def execute_node(self, state: StreamingAgentState) -> Dict:
         from app.agent.agents import agents
 
+        start_time = time.time()
         short_term_context = state.get("short_term_context", "")
         memories_context = state.get("related_memories", [""])[0]
         task_id = state.get("task_id", "unknown")
@@ -337,11 +347,14 @@ class StreamingWorkflow:
         result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
 
         await self.send_func(task_id, "agent_end", "executor", {"role": cfg["role_zh"], "content": result_text})
+        duration = time.time() - start_time
+        metrics.record_agent("executor", duration)
         return {"execute_result": result_text}
 
     async def validate_node(self, state: StreamingAgentState) -> Dict:
         from app.agent.agents import validator
 
+        start_time = time.time()
         task_id = state.get("task_id", "unknown")
         cfg = TASK_CONFIGS["validate_task"]
 
@@ -362,11 +375,14 @@ class StreamingWorkflow:
         result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "validator"))
 
         await self.send_func(task_id, "agent_end", "validator", {"role": cfg["role_zh"], "content": result_text})
+        duration = time.time() - start_time
+        metrics.record_agent("validator", duration)
         return {"validate_result": result_text}
 
     async def manager_node(self, state: StreamingAgentState) -> Dict:
         from app.agent.agents import manager
 
+        start_time = time.time()
         task_id = state.get("task_id", "unknown")
         cfg = TASK_CONFIGS["summarize_task"]
 
@@ -388,7 +404,9 @@ class StreamingWorkflow:
         result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "manager"))
 
         await self.send_func(task_id, "agent_end", "manager", {"role": cfg["role_zh"], "content": result_text})
-        return {"final_report": result_text}
+        duration = time.time() - start_time
+        metrics.record_agent("manager", duration)
+        return {"final_report": result_text, "task_type": state.get("task_type", "complex")}
 
     async def save_memory_node(self, state: StreamingAgentState) -> Dict:
         user_id = state.get("user_id", "default")
@@ -396,7 +414,10 @@ class StreamingWorkflow:
         task = state["task"]
         result = state.get("final_report", "")
         task_id = state.get("task_id", "unknown")
-        task_type = state.get("task_type", "task")
+        route_decision = state.get("route_decision", {})
+        task_type = route_decision.get("task_type", "complex")
+
+        print(f"[save_memory] task_type={task_type}, task={task[:30]}...")
 
         short_term_memory.add(session_id, "user", task)
         short_term_memory.add(session_id, "assistant", result)
@@ -413,14 +434,50 @@ class StreamingWorkflow:
                 "chat": "conversation"
             }
             memory_type = task_type_to_memory_type.get(task_type, "conversation")
-            
+
             if memory_type == "task":
-                memory.add_memory(
+                if len(result) > MAX_EMBEDDING_TOKENS:
+                    from app.settings import settings
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if settings.ACTIVE_PROVIDER == "OLLAMA":
+                            from langchain_core.messages import HumanMessage
+                            response = await loop.run_in_executor(
+                                None,
+                                lambda: llm.invoke([HumanMessage(content=f"用30字以内总结：{result[:MAX_EMBEDDING_TOKENS]}")])
+                            )
+                        else:
+                            response = await loop.run_in_executor(
+                                None,
+                                lambda: llm.call(f"用30字以内总结：{result[:MAX_EMBEDDING_TOKENS]}")
+                            )
+                        summary = response.content if hasattr(response, 'content') else str(response)
+                        print(f"[save_memory] 摘要生成成功: {summary}")
+                        content = f"用户需求：{task[:500]}\n摘要：{summary}"
+                    except Exception as e:
+                        import traceback
+                        print(f"[save_memory] 摘要生成失败: {e}")
+                        traceback.print_exc()
+                        content = f"用户需求：{task[:500]}\n执行结果：{result[:2000]}...[已截断]"
+                else:
+                    content = f"用户需求：{task[:500]}\n执行结果：{result}"
+            elif memory_type == "question":
+                content = f"用户问题：{task}\n回答：{result[:1000]}"
+            else:
+                content = f"用户：{task}\n助手：{result}"
+                if len(content) > 4000:
+                    content = content[:4000] + "..."
+            
+            print(f"[save_memory] 准备保存 memory_type={memory_type}, task_type={task_type}, content_len={len(content)}")
+
+            if memory_type == "task":
+                memory_id = memory.add_memory(
                     user_id=user_id,
-                    content=f"用户需求：{task}\n执行结果：{result}",
+                    content=content,
                     memory_type="task",
                     metadata={"task_id": task_id, "original_task_type": task_type}
                 )
+                print(f"[save_memory] 已保存 task 记忆, id={memory_id}")
             elif memory_type == "question":
                 memory.add_memory(
                     user_id=user_id,
@@ -435,8 +492,10 @@ class StreamingWorkflow:
                     memory_type="conversation",
                     metadata={"session_id": session_id, "original_task_type": task_type}
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            print(f"[save_memory] 错误: {e}")
+            traceback.print_exc()
 
         return {}
 
@@ -843,31 +902,45 @@ async def run_streaming_task(task_id: str, task_content: str, user_id: str, send
     if session_id is None:
         session_id = user_id
 
-    await send_func(task_id, "thinking", "system", {
-        "content": "🚀 开始处理",
-        "streaming": False
-    })
+    metrics.inc_concurrent()
+    start_time = time.time()
+    task_type = "unknown"
 
-    workflow = StreamingWorkflow(send_func)
-    compiled = workflow.build_workflow()
+    try:
+        await send_func(task_id, "thinking", "system", {
+            "content": "🚀 开始处理",
+            "streaming": False
+        })
 
-    result = await compiled.ainvoke({
-        "task_id": task_id,
-        "user_id": user_id,
-        "session_id": session_id,
-        "task": task_content,
-        "task_type": "task",
-        "short_term_context": "",
-        "related_memories": [],
-        "research_result": "",
-        "execute_result": "",
-        "validate_result": "",
-        "final_report": ""
-    })
+        workflow = StreamingWorkflow(send_func)
+        compiled = workflow.build_workflow()
 
-    await send_func(task_id, "complete", "system", {
-        "content": "✨ 完成",
-        "result": result["final_report"]
-    })
+        result = await compiled.ainvoke({
+            "task_id": task_id,
+            "user_id": user_id,
+            "session_id": session_id,
+            "task": task_content,
+            "task_type": "task",
+            "short_term_context": "",
+            "related_memories": [],
+            "research_result": "",
+            "execute_result": "",
+            "validate_result": "",
+            "final_report": ""
+        })
 
-    return result["final_report"]
+        task_type = result.get("task_type", "task")
+        await send_func(task_id, "complete", "system", {
+            "content": "✨ 完成",
+            "result": result["final_report"]
+        })
+
+        return result["final_report"]
+    except Exception as e:
+        task_type = "error"
+        raise
+    finally:
+        duration = time.time() - start_time
+        status = "error" if task_type == "error" else "success"
+        metrics.record_task(task_type, status, duration)
+        metrics.dec_concurrent()

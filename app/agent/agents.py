@@ -53,9 +53,9 @@ def _create_rag_tools():
     def _search_user_memory(query: str) -> str:
         """搜索用户历史记忆和偏好"""
         try:
-            results = memory.retrieve_memories(user_id="default", query=query, memory_type="preference", top_k=3)
+            results = memory.retrieve_memories(user_id="default", query=query, top_k=3)
             if not results:
-                return "未找到用户偏好"
+                return "未找到用户偏好或历史记录"
             return "\n".join([r.get("content", "") for r in results])
         except Exception as e:
             return f"检索失败: {e}"
@@ -69,7 +69,7 @@ def _create_rag_tools():
     
     search_mem_tool = Tool(
         name="search_user_memory",
-        description="搜索用户历史记忆和偏好。用于获取用户的偏好设置、历史交互记录等信息。",
+        description="搜索用户历史对话记录。用于获取用户之前的对话内容、历史交互等信息。",
         func=_search_user_memory,
         args_schema=SearchUserMemoryInput,
     )

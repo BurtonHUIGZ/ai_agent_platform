@@ -838,3 +838,49 @@ body {
         grid-column: 1;
     }
 }
+
+.stat-icon.orange { background: #f97316; }
+.stat-icon.cyan { background: #06b6d4; }
+.stat-icon.pink { background: #ec4899; }
+
+.agent-stats {
+    padding: 12px;
+}
+
+.chart-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.chart-bar-item {
+    display: grid;
+    grid-template-columns: 100px 1fr 80px;
+    gap: 12px;
+    align-items: center;
+}
+
+.chart-bar-label {
+    font-size: 13px;
+    color: var(--text-primary);
+    text-align: right;
+}
+
+.chart-bar-track {
+    height: 24px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.chart-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.chart-bar-value {
+    font-size: 13px;
+    color: var(--text-secondary);
+}

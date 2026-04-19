@@ -60,6 +60,10 @@
                 <i class="fa-solid fa-clock-rotate-left"></i>
                 <span>历史记录</span>
             </a>
+            <a href="#" class="nav-item" data-tab="monitor" onclick="switchTab('monitor'); return false;">
+                <i class="fa-solid fa-chart-line"></i>
+                <span>系统监控</span>
+            </a>
         </nav>
         
         <div class="sidebar-footer">
@@ -252,6 +256,90 @@
             <div class="empty-state">
                 <i class="fa-solid fa-clock"></i>
                 <p>历史记录功能开发中...</p>
+            </div>
+        </div>
+
+        <!-- 系统监控页面 -->
+        <div id="tab-monitor" class="content-tab">
+            <div class="page-header">
+                <h2><i class="fa-solid fa-chart-line"></i> 系统监控</h2>
+                <p>实时监控任务执行与系统运行状态</p>
+            </div>
+
+            <div class="memory-grid">
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-icon blue">
+                            <i class="fa-solid fa-list-check"></i>
+                        </div>
+                        <div class="stat-num" id="monTaskTotal">0</div>
+                        <div class="stat-label">任务总数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon green">
+                            <i class="fa-solid fa-check-circle"></i>
+                        </div>
+                        <div class="stat-num" id="monTaskSuccess">0</div>
+                        <div class="stat-label">成功</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon red">
+                            <i class="fa-solid fa-times-circle"></i>
+                        </div>
+                        <div class="stat-num" id="monTaskFailed">0</div>
+                        <div class="stat-label">失败</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon purple">
+                            <i class="fa-solid fa-clock"></i>
+                        </div>
+                        <div class="stat-num" id="monAvgDuration">0s</div>
+                        <div class="stat-label">平均耗时</div>
+                    </div>
+                </div>
+
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-icon orange">
+                            <i class="fa-solid fa-robot"></i>
+                        </div>
+                        <div class="stat-num" id="monConcurrent">0</div>
+                        <div class="stat-label">并发任务</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon cyan">
+                            <i class="fa-solid fa-users"></i>
+                        </div>
+                        <div class="stat-num" id="monSessions">0</div>
+                        <div class="stat-label">活跃会话</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon yellow">
+                            <i class="fa-solid fa-microchip"></i>
+                        </div>
+                        <div class="stat-num" id="monCpu">0%</div>
+                        <div class="stat-label">CPU</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon pink">
+                            <i class="fa-solid fa-memory"></i>
+                        </div>
+                        <div class="stat-num" id="monMemory">0%</div>
+                        <div class="stat-label">内存</div>
+                    </div>
+                </div>
+
+                <div class="memory-row">
+                    <div class="memory-card flex-2">
+                        <div class="card-title">
+                            <i class="fa-solid fa-chart-bar"></i>
+                            Agent 调用统计
+                        </div>
+                        <div class="card-body">
+                            <div id="agentStats" class="agent-stats"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </main>

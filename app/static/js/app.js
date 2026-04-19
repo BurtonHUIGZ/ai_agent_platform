@@ -38,6 +38,8 @@ function switchTab(tabName) {
     if (tabName === 'memory') {
         loadMemoryStats();
         loadMemories();
+    } else if (tabName === 'monitor') {
+        loadMonitorStats();
     }
 }
 
@@ -559,5 +561,79 @@ async function uploadKbFile() {
     } catch (e) {
         statusEl.innerHTML = `<p style="color:#cc0000">❌ 请求失败: ${e.message}</p>`;
         progressEl.style.display = 'none';
+    }
+}
+
+let monitorInterval = null;
+
+async function loadMonitorStats() {
+    const loadStats = async () => {
+        try {
+            const res = await fetch("/api/monitor/metrics", {
+                headers: { token: token }
+            });
+            const data = await res.json();
+
+            const taskTotal = data.task_counts?.task || 0;
+            const taskSuccess = data.task_counts?.success || 0;
+            const taskFailed = data.task_counts?.error || 0;
+            const avgDuration = data.task_avg_duration_task || 0;
+
+            document.getElementById("monTaskTotal").textContent = taskTotal;
+            document.getElementById("monTaskSuccess").textContent = taskSuccess;
+            document.getElementById("monTaskFailed").textContent = taskFailed;
+            document.getElementById("monAvgDuration").textContent = avgDuration.toFixed(1) + 's';
+
+            document.getElementById("monConcurrent").textContent = data.concurrent_tasks || 0;
+            document.getElementById("monSessions").textContent = data.active_sessions || 0;
+
+            const agentStatsEl = document.getElementById("agentStats");
+            if (agentStatsEl && data.agent_counts) {
+                let html = '<div class="chart-bars">';
+                for (const [agent, count] of Object.entries(data.agent_counts)) {
+                    const avgDur = data[`agent_avg_duration_${agent}`] || 0;
+                    html += `
+                        <div class="chart-bar-item">
+                            <div class="chart-bar-label">${agent}</div>
+                            <div class="chart-bar-track">
+                                <div class="chart-bar-fill" style="width: ${Math.min(count * 5, 100)}%"></div>
+                            </div>
+                            <div class="chart-bar-value">${count} (${avgDur.toFixed(1)}s)</div>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+                agentStatsEl.innerHTML = html;
+            }
+        } catch (e) {
+            console.error("Load monitor stats failed:", e);
+        }
+    };
+
+    const loadSystemStats = async () => {
+        try {
+            const res = await fetch("/api/monitor/status");
+            const data = await res.json();
+            document.getElementById("monCpu").textContent = (data.cpu || 0).toFixed(0) + '%';
+            document.getElementById("monMemory").textContent = (data.memory || 0).toFixed(0) + '%';
+        } catch (e) {
+            console.error("Load system stats failed:", e);
+        }
+    };
+
+    await loadStats();
+    await loadSystemStats();
+
+    if (monitorInterval) clearInterval(monitorInterval);
+    monitorInterval = setInterval(async () => {
+        await loadStats();
+        await loadSystemStats();
+    }, 5000);
+}
+
+function unloadMonitor() {
+    if (monitorInterval) {
+        clearInterval(monitorInterval);
+        monitorInterval = null;
     }
 }

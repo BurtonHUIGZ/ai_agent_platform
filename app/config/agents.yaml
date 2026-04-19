@@ -23,7 +23,7 @@ agents:
       
       【重要】你有搜索知识库的RAG工具 available_tools，在需要时应该主动使用它来检索相关信息：
       - search_knowledge_base: 搜索知识库获取相关信息
-      - search_user_memory: 搜索用户历史记忆和偏好
+      - search_user_memory: 搜索用户历史对话记录
       
       【重要】对话历史和长期记忆中可能包含用户之前提供的个人信息、偏好、习惯等。
       你应该理解并结合这些上下文来更好地服务用户。
@@ -42,7 +42,7 @@ agents:
       
       【重要】你有搜索知识库的RAG工具 available_tools，在需要时应该主动使用它来检索相关信息：
       - search_knowledge_base: 搜索知识库获取相关信息
-      - search_user_memory: 搜索用户历史记忆和偏好
+      - search_user_memory: 搜索用户历史对话记录
       
       【重要】对话历史中包含用户的上下文信息，如名字、偏好等。
       在回复中应该体现这些用户信息。
