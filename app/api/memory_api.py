@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Header, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import jieba
 from app.core.memory import memory, short_term_memory
 from app.core.user_system import check
 import tempfile
@@ -135,16 +136,26 @@ def extract_text_from_file(file_path: str, file_extension: str) -> str:
     return text
 
 
-def split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+def split_text(text: str, chunk_size: int = 500) -> List[str]:
+    words = list(jieba.cut(text))
     chunks = []
-    start = 0
-    text_len = len(text)
-    while start < text_len:
-        end = start + chunk_size
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        start = end - overlap
+    current_chunk = []
+    current_len = 0
+
+    for word in words:
+        word_len = len(word)
+        if word_len == 0:
+            continue
+        if current_len + word_len > chunk_size and current_chunk:
+            chunks.append("".join(current_chunk))
+            current_chunk = []
+            current_len = 0
+        current_chunk.append(word)
+        current_len += word_len
+
+    if current_chunk:
+        chunks.append("".join(current_chunk))
+
     return chunks
 
 
