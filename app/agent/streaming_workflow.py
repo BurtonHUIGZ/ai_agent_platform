@@ -10,6 +10,8 @@ from app.agent.tasks import TASK_CONFIGS
 from app.agent.agents import agents
 from app.core.memory import memory, short_term_memory, MAX_EMBEDDING_TOKENS, estimate_tokens
 from app.core.rag_tools import search_knowledge_base
+from app.core.eval_db import eval_db
+from app.core.eval_types import FeedbackRecord
 from app.llm.model_factory import llm, debug_llm_env
 from langchain_core.messages import HumanMessage
 from app.settings import settings
@@ -944,3 +946,25 @@ async def run_streaming_task(task_id: str, task_content: str, user_id: str, send
         status = "error" if task_type == "error" else "success"
         metrics.record_task(task_type, status, duration)
         metrics.dec_concurrent()
+        
+        final_response = ""
+        if "result" in locals() and result:
+            final_response = result.get("final_report", "")[:500]
+        
+        try:
+            retrieved_results = memory.retrieve_memories(
+                user_id=user_id,
+                query=task_content,
+                top_k=5
+            )
+            retrieved_doc_ids = [r["id"] for r in retrieved_results]
+            eval_db.add_feedback(FeedbackRecord(
+                session_id=session_id,
+                query=task_content,
+                response=final_response,
+                retrieved_doc_ids=retrieved_doc_ids,
+                retrieved_doc_count=len(retrieved_doc_ids),
+                latency_ms=duration * 1000
+            ))
+        except Exception as e:
+            print(f"[EVAL] Feedback record failed: {e}")

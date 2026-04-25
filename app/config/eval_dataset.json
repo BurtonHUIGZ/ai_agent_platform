@@ -1,0 +1,28 @@
+{
+  "test_cases": [
+    {
+      "query": "如何安装Python环境",
+      "expected_docs": [
+        "57a0c1ac-0c0e-40aa-ae7e-afb5ab1ee798"
+      ],
+      "difficulty": "easy",
+      "category": "setup"
+    },
+    {
+      "query": "python爬虫代码",
+      "expected_docs": [
+        "57a0c1ac-0c0e-40aa-ae7e-afb5ab1ee798"
+      ],
+      "difficulty": "easy",
+      "category": "usage"
+    },
+    {
+      "query": "刚才我问你什么问题",
+      "expected_docs": [
+        "cd396841-e6ea-446e-a65f-e6061f41fd15"
+      ],
+      "difficulty": "medium",
+      "category": "chat"
+    }
+  ]
+}

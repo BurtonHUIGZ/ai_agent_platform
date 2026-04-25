@@ -884,3 +884,63 @@ body {
     font-size: 13px;
     color: var(--text-secondary);
 }
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.btn-small:hover {
+    background: var(--primary-dark);
+}
+
+.eval-trends {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.trend-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+}
+
+.trend-date {
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 80px;
+}
+
+.trend-explicit, .trend-implicit {
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.trend-explicit {
+    color: var(--success);
+}
+
+.trend-implicit {
+    color: var(--warning);
+}
+
+.eval-by-category, .eval-by-difficulty {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.empty-text {
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+}

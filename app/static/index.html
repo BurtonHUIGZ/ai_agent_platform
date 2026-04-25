@@ -64,6 +64,10 @@
                 <i class="fa-solid fa-chart-line"></i>
                 <span>系统监控</span>
             </a>
+            <a href="#" class="nav-item" data-tab="eval" onclick="switchTab('eval'); return false;">
+                <i class="fa-solid fa-clipboard-check"></i>
+                <span>效果评估</span>
+            </a>
         </nav>
         
         <div class="sidebar-footer">
@@ -337,6 +341,114 @@
                         </div>
                         <div class="card-body">
                             <div id="agentStats" class="agent-stats"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 效果评估页面 -->
+        <div id="tab-eval" class="content-tab">
+            <div class="page-header">
+                <h2><i class="fa-solid fa-clipboard-check"></i> 效果评估</h2>
+                <p>RAG检索效果与用户反馈实时监控</p>
+            </div>
+
+            <div class="memory-grid">
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-icon blue">
+                            <i class="fa-solid fa-database"></i>
+                        </div>
+                        <div class="stat-num" id="evalTotalCases">0</div>
+                        <div class="stat-label">测试用例</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon green">
+                            <i class="fa-solid fa-check-double"></i>
+                        </div>
+                        <div class="stat-num" id="evalRecall">0%</div>
+                        <div class="stat-label">召回率</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon purple">
+                            <i class="fa-solid fa-bullseye"></i>
+                        </div>
+                        <div class="stat-num" id="evalPrecision">0%</div>
+                        <div class="stat-label">精确率</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon orange">
+                            <i class="fa-solid fa-trophy"></i>
+                        </div>
+                        <div class="stat-num" id="evalMRR">0%</div>
+                        <div class="stat-label">MRR</div>
+                    </div>
+                </div>
+
+                <div class="stats-cards">
+                    <div class="stat-card">
+                        <div class="stat-icon cyan">
+                            <i class="fa-solid fa-thumbs-up"></i>
+                        </div>
+                        <div class="stat-num" id="evalExplicitAcc">0%</div>
+                        <div class="stat-label">用户准确率</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon yellow">
+                            <i class="fa-solid fa-robot"></i>
+                        </div>
+                        <div class="stat-num" id="evalImplicitAcc">0%</div>
+                        <div class="stat-label">隐式准确率</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon pink">
+                            <i class="fa-solid fa-clock"></i>
+                        </div>
+                        <div class="stat-num" id="evalLatency">0ms</div>
+                        <div class="stat-label">平均延迟</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon red">
+                            <i class="fa-solid fa-comment"></i>
+                        </div>
+                        <div class="stat-num" id="evalFeedbacks">0</div>
+                        <div class="stat-label">反馈总数</div>
+                    </div>
+                </div>
+
+                <div class="memory-row">
+                    <div class="memory-card flex-2">
+                        <div class="card-title">
+                            <i class="fa-solid fa-chart-area"></i>
+                            准确率趋势
+                            <button class="btn-small" onclick="refreshEval()" style="margin-left: 10px;">
+                                <i class="fa-solid fa-sync"></i> 刷新
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="evalTrends" class="eval-trends"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="memory-row">
+                    <div class="memory-card flex-1">
+                        <div class="card-title">
+                            <i class="fa-solid fa-list"></i>
+                            按类别统计
+                        </div>
+                        <div class="card-body">
+                            <div id="evalByCategory" class="eval-by-category"></div>
+                        </div>
+                    </div>
+                    <div class="memory-card flex-1">
+                        <div class="card-title">
+                            <i class="fa-solid fa-layer-group"></i>
+                            按难度统计
+                        </div>
+                        <div class="card-body">
+                            <div id="evalByDifficulty" class="eval-by-difficulty"></div>
                         </div>
                     </div>
                 </div>

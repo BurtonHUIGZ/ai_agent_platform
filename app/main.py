@@ -8,6 +8,7 @@ from app.api.user_api import router as user_router
 from app.api.monitor_api import router as monitor_api
 from app.api.memory_api import router as memory_router
 from app.api.websocket_api import ws_router, agent_router as ws_agent_router, ws_info_router
+from app.api.eval_api import router as eval_router
 from app.settings import STATIC_PATH
 
 app = FastAPI(title="企业级AI Agent平台", version="v5.0")
@@ -19,6 +20,7 @@ app.include_router(memory_router)
 app.include_router(ws_router)
 app.include_router(ws_agent_router)
 app.include_router(ws_info_router)
+app.include_router(eval_router)
 
 
 @app.get("/test")

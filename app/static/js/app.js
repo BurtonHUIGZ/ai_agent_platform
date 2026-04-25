@@ -3,14 +3,31 @@ let currentWs = null;
 let currentTaskId = null;
 
 window.onload = function () {
+    checkAuthAndShow();
+};
+
+async function checkAuthAndShow() {
     const savedToken = localStorage.getItem("token");
-    if (savedToken) {
+    if (!savedToken) {
+        showLogin();
+        return;
+    }
+    try {
+        const res = await fetch("/api/user/me", {
+            headers: { token: savedToken }
+        });
+        if (!res.ok) {
+            localStorage.removeItem("token");
+            showLogin();
+            return;
+        }
         token = savedToken;
         showMain();
-    } else {
+    } catch (e) {
+        localStorage.removeItem("token");
         showLogin();
     }
-};
+}
 
 function showLogin() {
     document.getElementById("loginPage").style.display = "flex";
@@ -23,6 +40,12 @@ function showMain() {
 }
 
 function switchTab(tabName) {
+    const savedToken = localStorage.getItem("token");
+    if (!savedToken) {
+        showLogin();
+        return;
+    }
+    
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
         if (item.getAttribute('data-tab') === tabName) {
@@ -40,6 +63,8 @@ function switchTab(tabName) {
         loadMemories();
     } else if (tabName === 'monitor') {
         loadMonitorStats();
+    } else if (tabName === 'eval') {
+        loadEvalStats();
     }
 }
 
@@ -567,11 +592,21 @@ async function uploadKbFile() {
 let monitorInterval = null;
 
 async function loadMonitorStats() {
+    if (!token) {
+        showLogin();
+        return;
+    }
     const loadStats = async () => {
         try {
             const res = await fetch("/api/monitor/metrics", {
                 headers: { token: token }
             });
+            if (res.status === 401) {
+                localStorage.removeItem("token");
+                token = null;
+                showLogin();
+                return;
+            }
             const data = await res.json();
 
             const taskTotal = data.task_counts?.task || 0;
@@ -636,4 +671,103 @@ function unloadMonitor() {
         clearInterval(monitorInterval);
         monitorInterval = null;
     }
+}
+
+let evalInterval = null;
+
+async function loadEvalStats() {
+    if (!token) {
+        showLogin();
+        return;
+    }
+    const loadRagEval = async () => {
+        try {
+            const res = await fetch("/api/eval/rag?top_k=5", {
+                headers: { token: token }
+            });
+            if (res.status === 401) {
+                localStorage.removeItem("token");
+                token = null;
+                showLogin();
+                return;
+            }
+            const data = await res.json();
+            
+            const d = data.data || {};
+            document.getElementById("evalTotalCases").textContent = d.total_cases || 0;
+            document.getElementById("evalRecall").textContent = ((d.avg_recall || 0) * 100).toFixed(1) + '%';
+            document.getElementById("evalPrecision").textContent = ((d.avg_precision || 0) * 100).toFixed(1) + '%';
+            document.getElementById("evalMRR").textContent = ((d.avg_mrr || 0) * 100).toFixed(1) + '%';
+            document.getElementById("evalExplicitAcc").textContent = ((d.explicit_accuracy || 0) * 100).toFixed(1) + '%';
+            document.getElementById("evalImplicitAcc").textContent = ((d.implicit_accuracy || 0) * 100).toFixed(1) + '%';
+            document.getElementById("evalLatency").textContent = (d.avg_latency_ms || 0).toFixed(0) + 'ms';
+            document.getElementById("evalFeedbacks").textContent = d.total_feedbacks || 0;
+            
+            const byCategory = d.by_category || {};
+            const catHtml = Object.entries(byCategory).map(([cat, v]) => `
+                <div class="chart-bar-item">
+                    <div class="chart-bar-label">${cat}</div>
+                    <div class="chart-bar-track">
+                        <div class="chart-bar-fill" style="width: ${(v.avg_recall || 0) * 100}%"></div>
+                    </div>
+                    <div class="chart-bar-value">${((v.avg_recall || 0) * 100).toFixed(1)}%</div>
+                </div>
+            `).join('');
+            document.getElementById("evalByCategory").innerHTML = '<div class="chart-bars">' + catHtml + '</div>';
+            
+            const byDifficulty = d.by_difficulty || {};
+            const diffHtml = Object.entries(byDifficulty).map(([diff, v]) => `
+                <div class="chart-bar-item">
+                    <div class="chart-bar-label">${diff}</div>
+                    <div class="chart-bar-track">
+                        <div class="chart-bar-fill" style="width: ${(v.avg_recall || 0) * 100}%"></div>
+                    </div>
+                    <div class="chart-bar-value">${((v.avg_recall || 0) * 100).toFixed(1)}%</div>
+                </div>
+            `).join('');
+            document.getElementById("evalByDifficulty").innerHTML = '<div class="chart-bars">' + diffHtml + '</div>';
+            
+        } catch (e) {
+            console.error("Load eval stats failed:", e);
+        }
+    };
+    
+    const loadFeedbackStats = async () => {
+        try {
+            const res = await fetch("/api/eval/feedback/stats", {
+                headers: { token: token }
+            });
+            const data = await res.json();
+            
+            const d = data.data || {};
+            const trends = d.trends || [];
+            const trendsHtml = trends.map(t => `
+                <div class="trend-item">
+                    <div class="trend-date">${t.date}</div>
+                    <div class="trend-explicit">显式:${((t.explicit_accuracy || 0) * 100).toFixed(1)}%</div>
+                    <div class="trend-implicit">隐式:${((t.implicit_accuracy || 0) * 100).toFixed(1)}%</div>
+                </div>
+            `).join('');
+            document.getElementById("evalTrends").innerHTML = trendsHtml || '<div class="empty-text">暂无趋势数据</div>';
+            
+        } catch (e) {
+            console.error("Load feedback stats failed:", e);
+        }
+    };
+    
+    await loadRagEval();
+    await loadFeedbackStats();
+    
+    if (evalInterval) clearInterval(evalInterval);
+    evalInterval = setInterval(async () => {
+        await loadRagEval();
+        await loadFeedbackStats();
+    }, 10000);
+}
+
+function refreshEval() {
+    if (evalInterval) {
+        clearInterval(evalInterval);
+    }
+    loadEvalStats();
 }
