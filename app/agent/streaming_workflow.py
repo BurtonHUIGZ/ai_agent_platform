@@ -55,6 +55,8 @@ class StreamingAgentState(TypedDict):
     short_term_context: str
     related_memories: List[str]
     research_result: str
+    plan: str
+    plan_results: List[str]
     execute_result: str
     validate_result: str
     final_report: str
@@ -138,12 +140,18 @@ class StreamingWorkflow:
         memory_text = ""
         try:
             memories = memory.retrieve_memories(user_id=user_id, query=task, top_k=3)
-            related = [m["content"] for m in memories]
+            related = [m.get("full_content", m["content"]) for m in memories]
             memory_text = "\n".join([f"- {m}" for m in related]) if related else ""
         except Exception:
             pass
 
-        return {"short_term_context": short_term_context, "related_memories": [memory_text]}
+        combined = []
+        if short_term_context:
+            combined.append(f"【近期对话】\n{short_term_context}")
+        if memory_text:
+            combined.append(f"【历史记忆】\n{memory_text}")
+
+        return {"short_term_context": "\n\n".join(combined), "related_memories": [memory_text]}
 
     async def route_node(self, state: StreamingAgentState) -> Dict:
 
@@ -179,6 +187,9 @@ class StreamingWorkflow:
 
             route_decision = self._parse_route_decision(raw_output)
             task_type = route_decision["task_type"]
+
+            print(f"[ROUTER] raw_output: {raw_output[:200]}...")
+            print(f"[ROUTER] task_type: {task_type}, reason: {route_decision['reason']}")
 
             await self.send_func(task_id, "thinking", "router", {
                 "content": f"✅ 路由决策：{task_type} | {route_decision['reason']}",
@@ -410,6 +421,83 @@ class StreamingWorkflow:
         metrics.record_agent("manager", duration)
         return {"final_report": result_text, "task_type": state.get("task_type", "complex")}
 
+    async def plan_node(self, state: StreamingAgentState) -> Dict:
+
+        start_time = time.time()
+        short_term_context = state.get("short_term_context", "")
+        memories_context = state.get("related_memories", [""])[0]
+        task_id = state.get("task_id", "unknown")
+        task = state["task"]
+
+        await self.send_func(task_id, "agent_start", "planner", {
+            "role": "📝 规划师",
+            "content": "正在生成执行计划..."
+        })
+
+        prompts = load_prompts()
+        plan_prompt = prompts.get("plan", "").format(
+            short_term_context=short_term_context,
+            related_memories=memories_context,
+            task=task
+        )
+
+        loop = asyncio.get_event_loop()
+        if settings.ACTIVE_PROVIDER == "OLLAMA":
+            response = await loop.run_in_executor(
+                None,
+                lambda: llm.invoke([HumanMessage(content=plan_prompt)])
+            )
+            result_text = response.content if hasattr(response, 'content') else str(response)
+        else:
+            response = await loop.run_in_executor(
+                None,
+                lambda: llm.call(plan_prompt)
+            )
+            result_text = response.content if hasattr(response, 'content') else str(response)
+
+        await self.send_func(task_id, "agent_end", "planner", {"role": "📝 规划师", "content": result_text})
+        duration = time.time() - start_time
+        metrics.record_agent("planner", duration)
+        return {"plan": result_text, "plan_results": []}
+
+    async def execute_plan_node(self, state: StreamingAgentState) -> Dict:
+        from app.agent.agents import executor
+
+        start_time = time.time()
+        short_term_context = state.get("short_term_context", "")
+        memories_context = state.get("related_memories", [""])[0]
+        task_id = state.get("task_id", "unknown")
+        plan = state.get("plan", "")
+        cfg = TASK_CONFIGS["execute_task"]
+
+        await self.send_func(task_id, "agent_start", "executor", {
+            "role": cfg["role_zh"],
+            "content": "正在执行计划..."
+        })
+
+        prompts = load_prompts()
+        execute_prompt = prompts.get("execute_plan", "").format(
+            short_term_context=short_term_context,
+            related_memories=memories_context,
+            plan=plan
+        )
+
+        task_obj = _get_task_factory().create(
+            "execute_task",
+            short_term_context=short_term_context,
+            related_memories=memories_context,
+            research_result=execute_prompt
+        )
+        crew = Crew(agents=[executor], tasks=[task_obj], verbose=False)
+
+        loop = asyncio.get_event_loop()
+        result_text = await loop.run_in_executor(None, lambda: self._run_crew_with_stream(crew, task_id, "executor"))
+
+        await self.send_func(task_id, "agent_end", "executor", {"role": cfg["role_zh"], "content": result_text})
+        duration = time.time() - start_time
+        metrics.record_agent("execute_plan", duration)
+        return {"execute_result": result_text, "plan_results": [result_text]}
+
     async def save_memory_node(self, state: StreamingAgentState) -> Dict:
         user_id = state.get("user_id", "default")
         session_id = state.get("session_id", user_id)
@@ -463,12 +551,15 @@ class StreamingWorkflow:
                         content = f"用户需求：{task[:500]}\n执行结果：{result[:2000]}...[已截断]"
                 else:
                     content = f"用户需求：{task[:500]}\n执行结果：{result}"
+                    
+                if len(content) > 3500:
+                    content = content[:3500] + "...[已截断]"
             elif memory_type == "question":
                 content = f"用户问题：{task}\n回答：{result[:1000]}"
             else:
                 content = f"用户：{task}\n助手：{result}"
-                if len(content) > 4000:
-                    content = content[:4000] + "..."
+                if len(content) > 3500:
+                    content = content[:3500] + "..."
             
             print(f"[save_memory] 准备保存 memory_type={memory_type}, task_type={task_type}, content_len={len(content)}")
 
@@ -476,6 +567,7 @@ class StreamingWorkflow:
                 memory_id = memory.add_memory(
                     user_id=user_id,
                     content=content,
+                    full_content=f"用户需求：{task}\n执行结果：{result}",
                     memory_type="task",
                     metadata={"task_id": task_id, "original_task_type": task_type}
                 )
@@ -484,6 +576,7 @@ class StreamingWorkflow:
                 memory.add_memory(
                     user_id=user_id,
                     content=f"用户问题：{task}\n回答：{result}",
+                    full_content=f"用户问题：{task}\n回答：{result}",
                     memory_type="question",
                     metadata={"task_id": task_id}
                 )
@@ -491,6 +584,7 @@ class StreamingWorkflow:
                 memory.add_memory(
                     user_id=user_id,
                     content=f"用户：{task}\n助手：{result}",
+                    full_content=f"用户：{task}\n助手：{result}",
                     memory_type="conversation",
                     metadata={"session_id": session_id, "original_task_type": task_type}
                 )
@@ -511,6 +605,8 @@ class StreamingWorkflow:
             return "chat"
         elif task_type == "question":
             return "rag_vote"
+        elif task_type == "plan_execute":
+            return "plan_execute"
         elif task_type == "simple":
             if skip_research:
                 return "execute_skip_research"
@@ -617,6 +713,7 @@ class StreamingWorkflow:
             {
                 "chat": "chat",
                 "rag_vote": "rag_vote",
+                "plan_execute": "plan_execute",
                 "execute_direct": "execute_direct",
                 "execute_skip_research": "execute_skip_research",
                 "execute_skip_research_validate": "execute_skip_research_validate",
@@ -624,6 +721,12 @@ class StreamingWorkflow:
                 "research": "research"
             }
         )
+
+        # Plan-and-Execute flow
+        wf.add_node("plan_execute", self.plan_node)
+        wf.add_edge("plan_execute", "execute_plan")
+        wf.add_node("execute_plan", self.execute_plan_node)
+        wf.add_edge("execute_plan", "validate")
 
         # chat 和 rag_vote 完成后保存记忆
         wf.add_edge("chat", "save_memory")
