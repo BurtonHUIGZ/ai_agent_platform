@@ -75,23 +75,35 @@ class EvalDB:
     
     def update_rating(self, session_id: str, rating: int):
         with self._get_conn() as conn:
-            conn.execute(
-                """UPDATE feedback SET rating = ? 
+            cursor = conn.execute(
+                """SELECT id FROM feedback 
                 WHERE session_id = ? AND rating IS NULL
                 ORDER BY created_at DESC LIMIT 1""",
-                (rating, session_id)
+                (session_id,)
             )
-            conn.commit()
+            row = cursor.fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE feedback SET rating = ? WHERE id = ?",
+                    (rating, row[0])
+                )
+                conn.commit()
     
     def update_implicit_rating(self, session_id: str, implicit_rating: int):
         with self._get_conn() as conn:
-            conn.execute(
-                """UPDATE feedback SET implicit_rating = ? 
+            cursor = conn.execute(
+                """SELECT id FROM feedback 
                 WHERE session_id = ? AND implicit_rating IS NULL
                 ORDER BY created_at DESC LIMIT 1""",
-                (implicit_rating, session_id)
+                (session_id,)
             )
-            conn.commit()
+            row = cursor.fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE feedback SET implicit_rating = ? WHERE id = ?",
+                    (implicit_rating, row[0])
+                )
+                conn.commit()
     
     def get_feedbacks(
         self,

@@ -13,6 +13,7 @@ from app.core.rag_tools import search_knowledge_base
 from app.core.eval_db import eval_db
 from app.core.eval_types import FeedbackRecord
 from app.llm.model_factory import llm, debug_llm_env
+from app.core.rag_eval import rag_realtime_evaluator
 from langchain_core.messages import HumanMessage
 from app.settings import settings
 from app.core.metrics import metrics
@@ -1035,12 +1036,40 @@ async def run_streaming_task(task_id: str, task_content: str, user_id: str, send
         })
 
         task_type = result.get("task_type", "task")
+        
+        final_report = result.get("final_report", "")
+        
         await send_func(task_id, "complete", "system", {
             "content": "✨ 完成",
-            "result": result["final_report"]
+            "result": final_report
         })
-
-        return result["final_report"]
+        
+        try:
+            loop = asyncio.get_event_loop()
+            retrieved_results = memory.retrieve_memories(
+                user_id=user_id,
+                query=task_content,
+                top_k=5
+            )
+            eval_result = await loop.run_in_executor(
+                None,
+                lambda: rag_realtime_evaluator.evaluate_response(
+                    query=task_content,
+                    response=final_report,
+                    retrieved_docs=retrieved_results,
+                    session_id=session_id
+                )
+            )
+            print(f"[RAG评估] 回答评估完成: {eval_result.get('overall_score', 'N/A')}")
+            
+            await send_func(task_id, "rag_eval", "system", {
+                "content": "RAG评估完成",
+                "eval_result": eval_result
+            })
+        except Exception as eval_error:
+            print(f"[RAG评估] 回答评估失败: {eval_error}")
+        
+        return final_report
     except Exception as e:
         task_type = "error"
         raise

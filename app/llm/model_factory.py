@@ -55,5 +55,24 @@ class ModelFactory:
                 provider="litellm"
             )
 
+    @staticmethod
+    def get_eval_llm():
+        """获取评估专用LLM实例"""
+        config, provider, _ = _get_llm_config()
+        
+        if provider == "ALIYUN_BAILIAN":
+            eval_model_name = config.get("eval_model", "qwen-max")
+            eval_model = f"openai/{eval_model_name}"
+            return CrewAILLM(
+                model=eval_model,
+                base_url=config["base_url"],
+                api_base=config["base_url"],
+                api_key=config["api_key"],
+                temperature=config.get("eval_temperature", 0),
+                provider="litellm"
+            )
+        else:
+            return ModelFactory.get_llm(temperature=0)
+
 
 llm = ModelFactory.get_llm()

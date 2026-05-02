@@ -166,7 +166,7 @@ function handleWebSocketMessage(msg, logEl, reportEl, statusEl) {
         case 'connected':
             appendLog(logEl, 'info', '✅ ' + msg.message);
             break;
-
+        
         case 'thinking':
             const agentName = getAgentDisplayName(msg.agent);
             if (data.streaming) {
@@ -175,16 +175,16 @@ function handleWebSocketMessage(msg, logEl, reportEl, statusEl) {
                 appendLog(logEl, 'thinking', `${agentName}: ${content}`);
             }
             break;
-
+        
         case 'agent_start':
             appendLog(logEl, 'agent-start', `🤖 ${data.role || msg.agent} 开始工作`);
             appendLog(logEl, 'thinking', `${data.role || msg.agent}: ${data.content}`);
             break;
-
+        
         case 'agent_end':
             appendLog(logEl, 'agent-end', `✅ ${data.role || msg.agent} 思考完成`);
             break;
-
+        
         case 'complete':
             reportEl.innerText = data.result || data.content || "任务完成";
             statusEl.className = 'status-tag done';
@@ -192,21 +192,84 @@ function handleWebSocketMessage(msg, logEl, reportEl, statusEl) {
             appendLog(logEl, 'complete', '🎉 任务执行完成！');
             currentWs = null;
             break;
-
+        
+        case 'rag_eval':
+            displayRagEval(data.eval_result);
+            appendLog(logEl, 'eval', `📊 RAG评估完成，总分: ${data.eval_result?.overall_score || 'N/A'}`);
+            break;
+        
         case 'error':
             appendLog(logEl, 'error', '❌ 错误: ' + (data.error || msg.error || content));
             statusEl.className = 'status-tag';
             statusEl.innerHTML = '<span class="status-dot"></span>失败';
             currentWs = null;
             break;
-
+        
         default:
             if (content) {
                 appendLog(logEl, 'log', content);
             }
     }
-
+    
     logEl.scrollTop = logEl.scrollHeight;
+}
+
+function displayRagEval(evalResult) {
+    if (!evalResult || !evalResult.scores) return;
+    let evalDiv = document.getElementById('ragEvalResult');
+    if (!evalDiv) {
+        evalDiv = document.createElement('div');
+        evalDiv.id = 'ragEvalResult';
+        evalDiv.className = 'rag-eval-panel';
+        const resultPanel = document.querySelector('.result-panel');
+        if (resultPanel) {
+            resultPanel.insertBefore(evalDiv, document.getElementById('reportArea'));
+        }
+    }
+    const scores = evalResult.scores;
+    const overallScore = (evalResult.overall_score || 0) * 100;
+    const accuracy = ((scores.accuracy || 0) * 100).toFixed(0);
+    const completeness = ((scores.completeness || 0) * 100).toFixed(0);
+    const groundedness = ((scores.groundedness || 0) * 100).toFixed(0);
+    const helpfulness = ((scores.helpfulness || 0) * 100).toFixed(0);
+    
+    evalDiv.innerHTML = `
+        <div class="panel-title">
+            <i class="fa-solid fa-chart-line"></i>
+            RAG实时评估
+            <span class="eval-overall-score">${overallScore.toFixed(1)}%</span>
+        </div>
+        <div class="eval-scores">
+            <div class="eval-score-item">
+                <span class="eval-label">准确性</span>
+                <div class="eval-bar-track">
+                    <div class="eval-bar-fill" style="width: ${accuracy}%"></div>
+                </div>
+                <span class="eval-value">${accuracy}%</span>
+            </div>
+            <div class="eval-score-item">
+                <span class="eval-label">完整性</span>
+                <div class="eval-bar-track">
+                    <div class="eval-bar-fill" style="width: ${completeness}%"></div>
+                </div>
+                <span class="eval-value">${completeness}%</span>
+            </div>
+            <div class="eval-score-item">
+                <span class="eval-label">有据性</span>
+                <div class="eval-bar-track">
+                    <div class="eval-bar-fill" style="width: ${groundedness}%"></div>
+                </div>
+                <span class="eval-value">${groundedness}%</span>
+            </div>
+            <div class="eval-score-item">
+                <span class="eval-label">帮助性</span>
+                <div class="eval-bar-track">
+                    <div class="eval-bar-fill" style="width: ${helpfulness}%"></div>
+                </div>
+                <span class="eval-value">${helpfulness}%</span>
+            </div>
+        </div>
+    `;
 }
 
 function getAgentDisplayName(agent) {
@@ -359,19 +422,32 @@ async function searchMemories() {
             let html = '';
             data.data.forEach(m => {
                 const score = (m.similarity * 100).toFixed(0);
+                const type = m.metadata?.memory_type || 'general';
+                const icons = {
+                    'task': 'fa-list-check',
+                    'knowledge': 'fa-book',
+                    'preference': 'fa-heart',
+                    'general': 'fa-note-sticky'
+                };
                 html += `
                     <div class="memory-item">
-                        <div class="memory-item-header">
-                            <span class="memory-badge ${m.metadata?.memory_type || 'general'}">${m.metadata?.memory_type || 'general'}</span>
-                            <span class="memory-score">${score}% 相似</span>
+                        <div class="memory-thumbnail ${type}">
+                            <i class="fa-solid ${icons[type] || 'fa-note-sticky'}"></i>
+                            <span class="memory-score-badge">${score}%</span>
                         </div>
-                        <div class="memory-content-text">${m.content}</div>
+                        <div class="memory-card-body">
+                            <div class="memory-item-header">
+                                <span class="memory-badge ${type}">${type}</span>
+                                <span class="memory-score">${score}% 相似</span>
+                            </div>
+                            <div class="memory-content-text">${m.content}</div>
+                        </div>
                     </div>
                 `;
             });
             resultsEl.innerHTML = html;
         } else {
-            resultsEl.innerHTML = '<div class="memory-item"><p style="color:#8a8a8a">没有找到相关记忆</p></div>';
+            resultsEl.innerHTML = '<div class="empty-state"><i class="fa-solid fa-search"></i><p style="color:#8a8a8a">没有找到相关记忆</p></div>';
         }
     } catch (e) {
         resultsEl.innerHTML = `<div class="memory-item"><p style="color:#cc0000">搜索失败：${e.message}</p></div>`;
@@ -399,24 +475,37 @@ async function loadMemories() {
             let html = '';
             data.data.forEach(m => {
                 const time = m.metadata?.created_at ? new Date(m.metadata.created_at).toLocaleString() : '';
+                const type = m.metadata?.memory_type || 'general';
+                const icons = {
+                    'task': 'fa-list-check',
+                    'knowledge': 'fa-book',
+                    'preference': 'fa-heart',
+                    'general': 'fa-note-sticky'
+                };
                 html += `
                     <div class="memory-item">
-                        <div class="memory-item-header">
-                            <span class="memory-badge ${m.metadata?.memory_type || 'general'}">${m.metadata?.memory_type || 'general'}</span>
-                            <span class="memory-time">${time}</span>
+                        <div class="memory-thumbnail ${type}">
+                            <i class="fa-solid ${icons[type] || 'fa-note-sticky'}"></i>
                         </div>
-                        <div class="memory-content-text">${m.content}</div>
-                        <div class="memory-actions">
-                            <button class="btn-delete" onclick="deleteMemory('${m.id}')">
-                                <i class="fa-solid fa-trash"></i> 删除
-                            </button>
+                        <div class="memory-card-body">
+                            <div class="memory-item-header">
+                                <span class="memory-badge ${type}">${type}</span>
+                                <span class="memory-time">${time}</span>
+                            </div>
+                            <div class="memory-content-text">${m.content}</div>
+                            <div class="memory-meta">
+                                <span class="memory-time"><i class="fa-regular fa-clock"></i> ${time}</span>
+                                <button class="btn-delete" onclick="event.stopPropagation(); deleteMemory('${m.id}')">
+                                    <i class="fa-solid fa-trash"></i> 删除
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `;
             });
             listEl.innerHTML = html;
         } else {
-            listEl.innerHTML = '<div class="memory-item"><p style="color:#8a8a8a">暂无记忆</p></div>';
+            listEl.innerHTML = '<div class="empty-state"><i class="fa-solid fa-brain"></i><p style="color:#8a8a8a">暂无记忆</p></div>';
         }
     } catch (e) {
         listEl.innerHTML = `<div class="memory-item"><p style="color:#cc0000">加载失败：${e.message}</p></div>`;
@@ -744,8 +833,14 @@ async function loadEvalStats() {
             const trendsHtml = trends.map(t => `
                 <div class="trend-item">
                     <div class="trend-date">${t.date}</div>
-                    <div class="trend-explicit">显式:${((t.explicit_accuracy || 0) * 100).toFixed(1)}%</div>
-                    <div class="trend-implicit">隐式:${((t.implicit_accuracy || 0) * 100).toFixed(1)}%</div>
+                    <div class="trend-explicit" data-tooltip="用户主动点击👍/👎反馈的准确率">
+                        <i class="fa-solid fa-circle-info trend-info-icon"></i>
+                        显式:${((t.explicit_accuracy || 0) * 100).toFixed(1)}%
+                    </div>
+                    <div class="trend-implicit" data-tooltip="系统根据评分阈值自动判断的准确率">
+                        <i class="fa-solid fa-circle-info trend-info-icon"></i>
+                        隐式:${((t.implicit_accuracy || 0) * 100).toFixed(1)}%
+                    </div>
                 </div>
             `).join('');
             document.getElementById("evalTrends").innerHTML = trendsHtml || '<div class="empty-text">暂无趋势数据</div>';

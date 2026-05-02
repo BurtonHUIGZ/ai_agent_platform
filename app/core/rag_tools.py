@@ -2,26 +2,31 @@ from typing import List
 from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun
 from app.core.memory import memory
+from app.core.rag_eval import rag_realtime_evaluator
+import time
 
 
 @tool
-def search_knowledge_base(query: str, top_k: int = 5) -> str:
+def search_knowledge_base(query: str, top_k: int = 5, session_id: str = "default") -> str:
     """
     搜索知识库（RAG）获取相关信息。
     
     Args:
         query: 搜索关键词或问题
         top_k: 返回结果数量，默认5条
+        session_id: 会话ID，用于评估追踪
     
     Returns:
         搜索结果列表，如果没有结果返回空字符串
     """
     try:
+        start = time.time()
         results = memory.retrieve_memories(
             user_id="default",
             query=query,
             top_k=top_k
         )
+        latency_ms = (time.time() - start) * 1000
         
         if not results:
             return "知识库中未找到相关信息"
@@ -32,7 +37,20 @@ def search_knowledge_base(query: str, top_k: int = 5) -> str:
             similarity = item.get("similarity", 0)
             formatted_results.append(f"{i}. {content} (相关度: {similarity:.2f})")
         
-        return "\n\n".join(formatted_results)
+        result_text = "\n\n".join(formatted_results)
+        
+        try:
+            eval_result = rag_realtime_evaluator.evaluate_retrieval(
+                query=query,
+                retrieved_docs=results,
+                session_id=session_id,
+                latency_ms=latency_ms
+            )
+            print(f"[RAG评估] 检索评估完成: {eval_result.get('overall_score', 'N/A')}")
+        except Exception as eval_error:
+            print(f"[RAG评估] 评估失败: {eval_error}")
+        
+        return result_text
     except Exception as e:
         return f"知识库检索失败: {str(e)}"
 

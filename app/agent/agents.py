@@ -1,5 +1,6 @@
 import os
 import yaml
+import uuid
 
 from crewai import Agent
 from crewai.tools.base_tool import Tool
@@ -27,6 +28,7 @@ _ensure_env()
 
 from app.llm.model_factory import llm
 from app.core.memory import memory
+from app.core.rag_eval import rag_realtime_evaluator
 
 
 class SearchKnowledgeBaseInput(BaseModel):
@@ -39,14 +41,32 @@ class SearchUserMemoryInput(BaseModel):
 
 
 def _create_rag_tools():
+    _session_id = str(uuid.uuid4())
     
     def _search_knowledge_base(query: str, top_k: int = 5) -> str:
         """搜索知识库获取相关信息"""
         try:
+            import time
+            start = time.time()
             results = memory.retrieve_memories(user_id="default", query=query, top_k=top_k)
+            latency_ms = (time.time() - start) * 1000
+            
             if not results:
                 return "知识库中未找到相关信息"
-            return "\n\n".join([f"{i}. {r.get('content', '')}" for i, r in enumerate(results, 1)])
+            
+            result_text = "\n\n".join([f"{i}. {r.get('content', '')}" for i, r in enumerate(results, 1)])
+            
+            try:
+                rag_realtime_evaluator.evaluate_retrieval(
+                    query=query,
+                    retrieved_docs=results,
+                    session_id=_session_id,
+                    latency_ms=latency_ms
+                )
+            except Exception as eval_error:
+                print(f"[RAG评估] 检索评估失败: {eval_error}")
+            
+            return result_text
         except Exception as e:
             return f"检索失败: {e}"
     

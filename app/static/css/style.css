@@ -711,34 +711,77 @@ body {
 }
 
 .memory-list {
-    max-height: 280px;
-    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
     margin-top: 14px;
+    padding: 4px;
 }
 
 .memory-item {
-    padding: 14px;
-    background: var(--bg-primary);
+    background: var(--bg-white);
     border-radius: var(--radius);
-    margin-bottom: 8px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
 }
 
-.memory-item:last-child {
-    margin-bottom: 0;
+.memory-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
 }
 
 .memory-item-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 6px;
+    padding: 14px 14px 0;
+}
+
+.memory-thumbnail {
+    height: 140px;
+    background: linear-gradient(135deg, var(--blue), #64b5f6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 48px;
+    color: white;
+    position: relative;
+}
+
+.memory-thumbnail.task { background: linear-gradient(135deg, var(--blue), #64b5f6); }
+.memory-thumbnail.knowledge { background: linear-gradient(135deg, #9c27b0, #ce93d8); }
+.memory-thumbnail.preference { background: linear-gradient(135deg, var(--green), #81c784); }
+.memory-thumbnail.general { background: linear-gradient(135deg, #ff9800, #ffb74d); }
+
+.memory-score-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0,0,0,0.6);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.memory-card-body {
+    padding: 12px 14px 14px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
 }
 
 .memory-badge {
-    padding: 2px 8px;
+    padding: 3px 8px;
     border-radius: 4px;
     font-size: 11px;
     font-weight: 500;
+    display: inline-block;
 }
 
 .memory-badge.task { background: rgba(62, 166, 255, 0.15); color: var(--blue); }
@@ -762,9 +805,22 @@ body {
     color: var(--text-secondary);
     line-height: 1.5;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    margin: 8px 0;
+    flex: 1;
+}
+
+.memory-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
 }
 
 .memory-actions {
@@ -910,8 +966,15 @@ body {
     align-items: center;
     gap: 12px;
     padding: 8px 12px;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border-radius: 4px;
+}
+
+.trend-info-icon {
+    margin-right: 4px;
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: help;
 }
 
 .trend-date {
@@ -921,16 +984,69 @@ body {
 }
 
 .trend-explicit, .trend-implicit {
+    position: relative;
+    cursor: help;
     font-size: 12px;
     font-weight: 500;
 }
 
-.trend-explicit {
-    color: var(--success);
+.trend-explicit { color: var(--green); }
+.trend-implicit { color: #ff9800; }
+
+.trend-explicit:hover::after, .trend-implicit:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.85);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    pointer-events: none;
 }
 
-.trend-implicit {
-    color: var(--warning);
+.trend-explicit:hover::before, .trend-implicit:hover::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: rgba(0,0,0,0.85);
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.trend-explicit:hover::after, .trend-implicit:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.85);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.trend-explicit:hover::before, .trend-implicit:hover::before {
+    content: '';
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: rgba(0,0,0,0.85);
+    margin-bottom: -10px;
+    z-index: 1000;
 }
 
 .eval-by-category, .eval-by-difficulty {
@@ -943,4 +1059,77 @@ body {
     font-size: 13px;
     text-align: center;
     padding: 20px;
+}
+
+/* RAG实时评估面板 */
+.rag-eval-panel {
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+}
+
+.rag-eval-panel .panel-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+}
+
+.eval-overall-score {
+    margin-left: auto;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--blue);
+}
+
+.eval-scores {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.eval-score-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.eval-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 50px;
+}
+
+.eval-bar-track {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-hover);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.eval-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), var(--green));
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.eval-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 40px;
+    text-align: right;
+}
+
+.log-eval {
+    background: #f0f7ff;
+    border-left: 3px solid var(--blue);
 }
