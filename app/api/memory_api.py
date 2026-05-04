@@ -28,6 +28,18 @@ class MemoryDelete(BaseModel):
     memory_id: str
 
 
+class MemoryBatchDelete(BaseModel):
+    memory_ids: List[str]
+
+
+class MemorySearchAll(BaseModel):
+    query: str
+    memory_type: Optional[str] = None
+    user_id: Optional[str] = None
+    page: int = 1
+    page_size: int = 20
+
+
 @router.post("/search")
 def search_memories(req: MemorySearch, token: str = Header(None)):
     check(token, "memory.view")
@@ -53,10 +65,29 @@ def add_memory(req: MemoryAdd, token: str = Header(None)):
 
 
 @router.get("/list/{user_id}")
-def list_memories(user_id: str, memory_type: Optional[str] = None, token: str = Header(None)):
+def list_memories(
+    user_id: str, 
+    memory_type: Optional[str] = None, 
+    limit: int = 20,
+    offset: int = 0,
+    token: str = Header(None)
+):
     check(token, "memory.view")
-    results = memory.get_user_memories(user_id, memory_type)
-    return {"code": 200, "data": results}
+    # 默认只返回用户记忆（不含知识库）
+    result = memory.get_user_memories(user_id, memory_type, include_knowledge=False, limit=limit, offset=offset)
+    return {"code": 200, "data": result["list"], "total": result["total"], "limit": result["limit"], "offset": result["offset"]}
+
+
+@router.get("/knowledge/{user_id}")
+def list_knowledge(
+    user_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    token: str = Header(None)
+):
+    check(token, "memory.view")
+    result = memory.get_user_memories(user_id, memory_type=None, include_knowledge=True, limit=limit, offset=offset)
+    return {"code": 200, "data": result["list"], "total": result["total"], "limit": result["limit"], "offset": result["offset"]}
 
 
 @router.post("/delete")
@@ -64,6 +95,42 @@ def delete_memory(req: MemoryDelete, token: str = Header(None)):
     check(token, "memory.write")
     success = memory.delete_memory(req.memory_id)
     return {"code": 200, "success": success}
+
+
+@router.post("/batch_delete")
+def batch_delete_memories(req: MemoryBatchDelete, token: str = Header(None)):
+    check(token, "memory.write")
+    deleted_count = memory.batch_delete_memories(req.memory_ids)
+    return {"code": 200, "deleted_count": deleted_count}
+
+
+@router.post("/search_all")
+def search_all_memories(req: MemorySearchAll, token: str = Header(None)):
+    check(token, "memory.view")
+    result = memory.search_all_memories(
+        query=req.query,
+        memory_type=req.memory_type,
+        user_id=req.user_id,
+        page=req.page,
+        page_size=req.page_size
+    )
+    return {"code": 200, "data": result}
+
+
+class MemoryDeleteByFilter(BaseModel):
+    user_id: str
+    memory_type: Optional[str] = None
+
+
+@router.post("/delete_by_filter")
+def delete_by_filter(req: MemoryDeleteByFilter, token: str = Header(None)):
+    check(token, "memory.write")
+    results = memory.get_user_memories(req.user_id, req.memory_type, limit=10000)
+    if results:
+        ids = [m["id"] for m in results]
+        deleted_count = memory.batch_delete_memories(ids)
+        return {"code": 200, "deleted_count": deleted_count}
+    return {"code": 200, "deleted_count": 0}
 
 
 @router.post("/clear/{user_id}")

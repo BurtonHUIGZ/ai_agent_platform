@@ -105,12 +105,37 @@ class LongTermMemory:
             path=CHROMA_PATH,
             settings=ChromaSettings(anonymized_telemetry=False)
         )
-        self.collection = self.client.get_or_create_collection(
-            name="agent_memories",
-            metadata={"description": "AI Agent 长期记忆存储"}
+        
+        # 用户记忆 collection（存储 task/question/conversation 类型）
+        self.user_collection = self.client.get_or_create_collection(
+            name="user_memories",
+            metadata={"description": "用户会话记忆"}
         )
+        
+        # 知识库 collection（存储 knowledge/general 类型）
+        self.knowledge_collection = self.client.get_or_create_collection(
+            name="knowledge_base",
+            metadata={"description": "知识库文档"}
+        )
+        
+        # 默认使用用户记忆 collection
+        self.collection = self.user_collection
+        
         self.embedding_model = "nomic-embed-text"
         self._embeddings = None
+        self._reranker = None
+
+    def _get_reranker(self):
+        if self._reranker is None:
+            try:
+                import torch
+                from sentence_transformers import CrossEncoder
+                self._reranker = CrossEncoder("BAAI/bge-reranker-base")
+                print("[Memory] Reranker 加载成功")
+            except Exception as e:
+                print(f"[Memory] 加载 reranker 失败: {e}")
+                self._reranker = False
+        return self._reranker if self._reranker else None
 
     def _get_embeddings(self):
         if self._embeddings is None:
@@ -123,6 +148,15 @@ class LongTermMemory:
     def _get_embedding(self, text: str) -> List[float]:
         embeddings = self._get_embeddings()
         return embeddings.embed_query(text)
+
+    def _get_collection(self, memory_type: str):
+        """根据 memory_type 选择对应的 collection"""
+        if memory_type in ["task", "question", "conversation", "preference"]:
+            return self.user_collection
+        elif memory_type in ["knowledge", "general"]:
+            return self.knowledge_collection
+        else:
+            return self.user_collection
 
     def add_memory(
             self,
@@ -142,6 +176,9 @@ class LongTermMemory:
             "db_id": memory_id
         })
 
+        # 根据类型选择 collection
+        collection = self._get_collection(memory_type)
+        
         summary = content[:500] if len(content) > 500 else content
 
         try:
@@ -152,7 +189,7 @@ class LongTermMemory:
             raise
 
         try:
-            self.collection.add(
+            collection.add(
                 ids=[memory_id],
                 embeddings=[embedding],
                 documents=[summary],
@@ -229,6 +266,108 @@ class LongTermMemory:
         memories.sort(key=lambda m: m["combined_score"], reverse=True)
         return memories[:top_k]
 
+    def _query_single_collection(self, collection, user_id: str, query: str, top_k: int):
+        """查询单个 collection"""
+        try:
+            query_embedding = self._get_embedding(query)
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where={"user_id": {"$eq": user_id}},
+                include=["documents", "metadatas", "distances"]
+            )
+            
+            memories = []
+            if results["documents"] and len(results["documents"]) > 0:
+                for i, doc in enumerate(results["documents"][0]):
+                    mem_id = results["ids"][0][i]
+                    metadata = results["metadatas"][0][i]
+                    similarity = 1 - results["distances"][0][i]
+                    
+                    try:
+                        conn = _get_sqlite_conn()
+                        row = conn.execute(
+                            "SELECT full_content, created_at FROM memory_fulltext WHERE id=?",
+                            [mem_id]
+                        ).fetchone()
+                        full_content = row[0] if row else None
+                        created_at = row[1] if row else metadata.get("created_at", "")
+                    except Exception:
+                        full_content = None
+                        created_at = metadata.get("created_at", "")
+                    
+                    memories.append({
+                        "id": mem_id,
+                        "content": doc,
+                        "full_content": full_content or doc,
+                        "metadata": metadata,
+                        "similarity": similarity,
+                        "created_at": created_at,
+                        "collection": collection.name
+                    })
+            return memories
+        except Exception as e:
+            print(f"[Memory] 查询 collection 失败: {e}")
+            return []
+
+    def hybrid_retrieve(
+            self,
+            user_id: str,
+            query: str,
+            top_k: int = 5,
+            user_top_k: int = 5,
+            kb_top_k: int = 5
+    ) -> List[Dict[str, Any]]:
+        """混合检索 + 重排序"""
+        import concurrent.futures
+        
+        # 并行检索两个 collection
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            user_future = executor.submit(
+                self._query_single_collection, 
+                self.user_collection, user_id, query, user_top_k
+            )
+            kb_future = executor.submit(
+                self._query_single_collection,
+                self.knowledge_collection, user_id, query, kb_top_k
+            )
+            
+            user_memories = user_future.result()
+            kb_memories = kb_future.result()
+        
+        # 合并结果
+        all_memories = user_memories + kb_memories
+        
+        if not all_memories:
+            return []
+        
+        # 使用 Cross-Encoder 重排序
+        reranker = self._get_reranker()
+        if reranker:
+            try:
+                # 准备 reranker 输入
+                doc_texts = [m["content"] for m in all_memories]
+                pairs = [[query, doc] for doc in doc_texts]
+                
+                # 获取 reranker 分数
+                scores = reranker.predict(pairs)
+                
+                # 更新分数
+                for i, m in enumerate(all_memories):
+                    m["rerank_score"] = float(scores[i])
+                    # 给予用户记忆一定权重提升
+                    if m.get("collection") == "user_memories":
+                        m["rerank_score"] *= 1.2
+                
+                # 按重排序分数排序
+                all_memories.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
+            except Exception as e:
+                print(f"[Memory] 重排序失败: {e}")
+                # 降级使用相似度排序
+                all_memories.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+        
+        return all_memories[:top_k]
+
     def _calc_time_weight(self, created_at: str) -> float:
         try:
             created = datetime.fromisoformat(created_at)
@@ -248,56 +387,148 @@ class LongTermMemory:
             self,
             user_id: str,
             memory_type: Optional[str] = None,
-            limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        results = self.collection.get(
-            where=build_where_filter(user_id, memory_type),
-            limit=limit,
-            include=["documents", "metadatas"]
-        )
-
+            limit: int = 100,
+            include_knowledge: bool = False,
+            offset: int = 0
+    ) -> Dict[str, Any]:
         memories = []
-        if results["documents"]:
-            for i, doc in enumerate(results["documents"]):
-                memories.append({
-                    "id": results["ids"][i],
-                    "content": doc,
-                    "metadata": results["metadatas"][i]
-                })
+        
+        # 根据 memory_type 确定要查询的 collection
+        user_types = ["task", "question", "conversation", "preference"]
+        kb_types = ["knowledge", "general"]
+        
+        collections_to_query = []
+        
+        if memory_type:
+            if memory_type in user_types:
+                collections_to_query = [self.user_collection]
+            elif memory_type in kb_types:
+                collections_to_query = [self.knowledge_collection]
+            else:
+                collections_to_query = [self.user_collection]
+        else:
+            # 没有指定类型
+            if include_knowledge:
+                # 查询知识库
+                collections_to_query = [self.knowledge_collection]
+            else:
+                # 默认只查询用户记忆
+                collections_to_query = [self.user_collection]
+        
+        # 先获取总数
+        total_count = 0
+        for collection in collections_to_query:
+            try:
+                count_result = collection.get(
+                    where={"user_id": {"$eq": user_id}},
+                    include=[]
+                )
+                total_count += len(count_result.get("ids", []))
+            except Exception:
+                pass
+        
+        for collection in collections_to_query:
+            try:
+                results = collection.get(
+                    where={"user_id": {"$eq": user_id}},
+                    limit=limit,
+                    offset=offset,
+                    include=["documents", "metadatas"]
+                )
+                
+                if results.get("documents"):
+                    for i, doc in enumerate(results["documents"]):
+                        memories.append({
+                            "id": results["ids"][i],
+                            "content": doc,
+                            "metadata": results["metadatas"][i],
+                            "collection": collection.name
+                        })
+            except Exception:
+                pass
 
-        return memories
+        # 按时间排序
+        memories.sort(key=lambda x: x.get("metadata", {}).get("created_at", ""), reverse=True)
+        
+        return {
+            "list": memories,
+            "total": total_count,
+            "offset": offset,
+            "limit": limit
+        }
 
     def delete_memory(self, memory_id: str) -> bool:
         try:
-            self.collection.delete(ids=[memory_id])
-            return True
+            # 尝试从两个 collection 删除
+            deleted = False
+            for collection in [self.user_collection, self.knowledge_collection]:
+                try:
+                    collection.delete(ids=[memory_id])
+                    deleted = True
+                except Exception:
+                    pass
+            
+            # 删除 SQLite 中的记录
+            conn = _get_sqlite_conn()
+            conn.execute("DELETE FROM memory_fulltext WHERE id=?", [memory_id])
+            conn.commit()
+            
+            return deleted
         except Exception:
             return False
 
     def clear_user_memories(self, user_id: str) -> int:
-        results = self.collection.get(
-            where={"user_id": {"$eq": user_id}},
-            include=["ids"]
-        )
-
         count = 0
-        if results["ids"]:
-            self.collection.delete(ids=results["ids"])
-            count = len(results["ids"])
+        
+        # 清空用户记忆 collection
+        user_results = self.user_collection.get(
+            where={"user_id": {"$eq": user_id}},
+            include=["metadatas"]
+        )
+        user_ids = user_results.get("ids", [])
+        if user_ids:
+            self.user_collection.delete(ids=user_ids)
+            count += len(user_ids)
+        
+        # 清空知识库 collection
+        kb_results = self.knowledge_collection.get(
+            where={"user_id": {"$eq": user_id}},
+            include=["metadatas"]
+        )
+        kb_ids = kb_results.get("ids", [])
+        if kb_ids:
+            self.knowledge_collection.delete(ids=kb_ids)
+            count += len(kb_ids)
+        
+        # 清空 SQLite 记录
+        conn = _get_sqlite_conn()
+        conn.execute("DELETE FROM memory_fulltext WHERE user_id=?", [user_id])
+        conn.commit()
 
         return count
 
     def get_memory_stats(self, user_id: Optional[str] = None) -> Dict[str, Any]:
         if user_id:
-            results = self.collection.get(
+            # 统计用户记忆 collection
+            user_results = self.user_collection.get(
                 where={"user_id": {"$eq": user_id}},
                 include=[]
             )
-            total = len(results["ids"]) if results["ids"] else 0
+            user_total = len(user_results.get("ids", []))
+            
+            # 统计知识库 collection
+            kb_results = self.knowledge_collection.get(
+                where={"user_id": {"$eq": user_id}},
+                include=[]
+            )
+            kb_total = len(kb_results.get("ids", []))
+            
+            total = user_total + kb_total
 
             by_type = {}
-            for mtype in ["task", "preference", "knowledge", "general"]:
-                type_results = self.collection.get(
+            # 用户记忆类型
+            for mtype in ["task", "question", "conversation", "preference"]:
+                type_results = self.user_collection.get(
                     where={
                         "$and": [
                             {"user_id": {"$eq": user_id}},
@@ -306,14 +537,99 @@ class LongTermMemory:
                     },
                     include=[]
                 )
-                by_type[mtype] = len(type_results["ids"]) if type_results["ids"] else 0
+                by_type[mtype] = len(type_results.get("ids", []))
+            
+            # 知识库类型
+            for mtype in ["knowledge", "general"]:
+                type_results = self.knowledge_collection.get(
+                    where={
+                        "$and": [
+                            {"user_id": {"$eq": user_id}},
+                            {"memory_type": {"$eq": mtype}}
+                        ]
+                    },
+                    include=[]
+                )
+                by_type[mtype] = len(type_results.get("ids", []))
 
             return {
                 "total": total,
-                "by_type": by_type
+                "by_type": by_type,
+                "user_total": user_total,
+                "knowledge_total": kb_total
             }
         else:
-            return {"total": self.collection.count()}
+            return {"total": self.user_collection.count() + self.knowledge_collection.count()}
+
+    def search_all_memories(
+            self,
+            query: str,
+            memory_type: Optional[str] = None,
+            user_id: Optional[str] = None,
+            page: int = 1,
+            page_size: int = 20
+    ) -> Dict[str, Any]:
+        where_filter = {}
+        if memory_type:
+            where_filter["memory_type"] = {"$eq": memory_type}
+        if user_id:
+            where_filter["user_id"] = {"$eq": user_id}
+
+        query_embedding = self._get_embedding(query)
+        total_count = self.collection.count()
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=min(page_size * page, total_count),
+            where=where_filter if where_filter else None,
+            include=["documents", "metadatas", "distances"]
+        )
+
+        memories = []
+        if results["documents"] and len(results["documents"]) > 0:
+            for i, doc in enumerate(results["documents"][0]):
+                mem_id = results["ids"][0][i]
+                metadata = results["metadatas"][0][i]
+                similarity = 1 - results["distances"][0][i]
+
+                try:
+                    conn = _get_sqlite_conn()
+                    row = conn.execute(
+                        "SELECT full_content, created_at FROM memory_fulltext WHERE id=?",
+                        [mem_id]
+                    ).fetchone()
+                    full_content = row[0] if row else None
+                    created_at = row[1] if row else metadata.get("created_at", "")
+                except Exception:
+                    full_content = None
+                    created_at = metadata.get("created_at", "")
+
+                memories.append({
+                    "id": mem_id,
+                    "content": doc,
+                    "full_content": full_content or doc,
+                    "metadata": metadata,
+                    "similarity": similarity,
+                    "created_at": created_at
+                })
+
+        start = (page - 1) * page_size
+        end = start + page_size
+        return {
+            "list": memories[start:end],
+            "total": len(memories),
+            "page": page,
+            "page_size": page_size
+        }
+
+    def batch_delete_memories(
+            self,
+            memory_ids: List[str]
+    ) -> int:
+        deleted_count = 0
+        for mem_id in memory_ids:
+            if self.delete_memory(mem_id):
+                deleted_count += 1
+        return deleted_count
 
 
 memory = LongTermMemory()

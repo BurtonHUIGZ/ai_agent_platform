@@ -353,9 +353,9 @@ async function loadMemoryStats() {
         }
         const data = await res.json();
         if (data.data) {
-            document.getElementById("statTotal").textContent = data.data.total || 0;
+            document.getElementById("statUserTotal").textContent = data.data.user_total || 0;
             document.getElementById("statTask").textContent = data.data.by_type?.task || 0;
-            document.getElementById("statKnowledge").textContent = data.data.by_type?.knowledge || 0;
+            document.getElementById("statKnowledge").textContent = data.data.knowledge_total || 0;
         }
     } catch (e) {
         console.error(e);
@@ -454,12 +454,20 @@ async function searchMemories() {
     }
 }
 
+let memoryPagination = {
+    page: 1,
+    limit: 10,
+    total: 0
+};
+
 async function loadMemories() {
     const listEl = document.getElementById("memoryList");
     listEl.innerHTML = '<div class="memory-item"><p>加载中...</p></div>';
 
+    const offset = (memoryPagination.page - 1) * memoryPagination.limit;
+
     try {
-        const res = await fetch("/api/memory/list/default", {
+        const res = await fetch(`/api/memory/list/default?limit=${memoryPagination.limit}&offset=${offset}`, {
             headers: { token: token }
         });
 
@@ -471,6 +479,8 @@ async function loadMemories() {
         }
 
         const data = await res.json();
+        memoryPagination.total = data.total || 0;
+        
         if (data.data && data.data.length > 0) {
             let html = '';
             data.data.forEach(m => {
@@ -480,23 +490,28 @@ async function loadMemories() {
                     'task': 'fa-list-check',
                     'knowledge': 'fa-book',
                     'preference': 'fa-heart',
-                    'general': 'fa-note-sticky'
+                    'general': 'fa-note-sticky',
+                    'question': 'fa-circle-question',
+                    'conversation': 'fa-comments'
                 };
                 html += `
                     <div class="memory-item">
+                        <div class="memory-checkbox-wrap">
+                            <input type="checkbox" class="memory-checkbox" value="${m.id}">
+                        </div>
                         <div class="memory-thumbnail ${type}">
                             <i class="fa-solid ${icons[type] || 'fa-note-sticky'}"></i>
                         </div>
                         <div class="memory-card-body">
                             <div class="memory-item-header">
-                                <span class="memory-badge ${type}">${type}</span>
+                                <span class="memory-badge ${type}">${type === 'question' ? '问答' : type === 'conversation' ? '对话' : type}</span>
                                 <span class="memory-time">${time}</span>
                             </div>
                             <div class="memory-content-text">${m.content}</div>
                             <div class="memory-meta">
-                                <span class="memory-time"><i class="fa-regular fa-clock"></i> ${time}</span>
+                                <span><i class="fa-regular fa-clock"></i> ${time}</span>
                                 <button class="btn-delete" onclick="event.stopPropagation(); deleteMemory('${m.id}')">
-                                    <i class="fa-solid fa-trash"></i> 删除
+                                    <i class="fa-solid fa-trash"></i>
                                 </button>
                             </div>
                         </div>
@@ -507,6 +522,8 @@ async function loadMemories() {
         } else {
             listEl.innerHTML = '<div class="empty-state"><i class="fa-solid fa-brain"></i><p style="color:#8a8a8a">暂无记忆</p></div>';
         }
+
+        updatePagination();
     } catch (e) {
         listEl.innerHTML = `<div class="memory-item"><p style="color:#cc0000">加载失败：${e.message}</p></div>`;
     }
@@ -531,6 +548,25 @@ async function deleteMemory(memoryId) {
         }
     } catch (e) {
         alert("删除失败：" + e.message);
+    }
+}
+
+function updatePagination() {
+    const totalPages = Math.max(1, Math.ceil(memoryPagination.total / memoryPagination.limit));
+    document.getElementById("currentPage").textContent = memoryPagination.page;
+    document.getElementById("totalPages").textContent = totalPages;
+    
+    document.getElementById("prevPage").disabled = memoryPagination.page <= 1;
+    document.getElementById("nextPage").disabled = memoryPagination.page >= totalPages;
+}
+
+function changePage(delta) {
+    const totalPages = Math.max(1, Math.ceil(memoryPagination.total / memoryPagination.limit));
+    const newPage = memoryPagination.page + delta;
+    
+    if (newPage >= 1 && newPage <= totalPages) {
+        memoryPagination.page = newPage;
+        loadMemories();
     }
 }
 
@@ -865,4 +901,127 @@ function refreshEval() {
         clearInterval(evalInterval);
     }
     loadEvalStats();
+}
+
+async function searchAllMemories() {
+    const query = document.getElementById("searchQuery").value.trim();
+    if (!query) return alert("请输入搜索内容！");
+
+    const resultsEl = document.getElementById("searchResults");
+    resultsEl.innerHTML = '<div class="memory-item"><p>全局搜索中...</p></div>';
+
+    try {
+        const res = await fetch("/api/memory/search_all", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                token: token
+            },
+            body: JSON.stringify({
+                query: query,
+                user_id: null,
+                memory_type: null,
+                page: 1,
+                page_size: 20
+            })
+        });
+
+        const data = await res.json();
+        if (data.data && data.data.list && data.data.list.length > 0) {
+            let html = `<div style="margin-bottom:10px;color:#666;">全局搜索结果: 共找到 ${data.data.total} 条相关记忆</div>`;
+            data.data.list.forEach(m => {
+                const score = (m.similarity * 100).toFixed(0);
+                const type = m.metadata?.memory_type || 'general';
+                const userId = m.metadata?.user_id || 'default';
+                const icons = {
+                    'task': 'fa-list-check',
+                    'knowledge': 'fa-book',
+                    'preference': 'fa-heart',
+                    'general': 'fa-note-sticky'
+                };
+                html += `
+                    <div class="memory-item">
+                        <div class="memory-thumbnail ${type}">
+                            <i class="fa-solid ${icons[type] || 'fa-note-sticky'}"></i>
+                            <span class="memory-score-badge">${score}%</span>
+                        </div>
+                        <div class="memory-card-body">
+                            <div class="memory-item-header">
+                                <span class="memory-badge ${type}">${type}</span>
+                                <span class="memory-score">${score}% 相似</span>
+                                <span class="memory-user" style="color:#888;font-size:12px;">用户: ${userId}</span>
+                            </div>
+                            <div class="memory-content-text">${m.content}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            resultsEl.innerHTML = html;
+        } else {
+            resultsEl.innerHTML = '<div class="empty-state"><i class="fa-solid fa-search"></i><p style="color:#8a8a8a">没有找到相关记忆</p></div>';
+        }
+    } catch (e) {
+        resultsEl.innerHTML = `<div class="memory-item"><p style="color:#cc0000">搜索失败：${e.message}</p></div>`;
+    }
+}
+
+function toggleSelectAllMemories() {
+    const checked = document.getElementById("selectAllMemories").checked;
+    document.querySelectorAll(".memory-checkbox").forEach(cb => {
+        cb.checked = checked;
+    });
+}
+
+async function batchDeleteMemories() {
+    const checkboxes = document.querySelectorAll(".memory-checkbox:checked");
+    if (checkboxes.length === 0) return alert("请选择要删除的记忆！");
+
+    if (!confirm(`确定删除选中的 ${checkboxes.length} 条记忆？`)) return;
+
+    const ids = Array.from(checkboxes).map(cb => cb.value);
+
+    try {
+        const res = await fetch("/api/memory/batch_delete", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                token: token
+            },
+            body: JSON.stringify({ memory_ids: ids })
+        });
+
+        const data = await res.json();
+        if (data.code === 200) {
+            alert(`成功删除 ${data.deleted_count} 条记忆`);
+            document.getElementById("selectAllMemories").checked = false;
+            loadMemoryStats();
+            loadMemories();
+        } else {
+            alert("删除失败");
+        }
+    } catch (e) {
+        alert("删除失败：" + e.message);
+    }
+}
+
+async function clearAllUserMemories() {
+    if (!confirm("确定清除当前用户的所有记忆？此操作不可恢复！")) return;
+
+    try {
+        const res = await fetch("/api/memory/clear/default", {
+            method: "POST",
+            headers: { token: token }
+        });
+
+        const data = await res.json();
+        if (data.code === 200) {
+            alert(`成功清除 ${data.deleted_count} 条记忆`);
+            loadMemoryStats();
+            loadMemories();
+        } else {
+            alert("清除失败");
+        }
+    } catch (e) {
+        alert("清除失败：" + e.message);
+    }
 }

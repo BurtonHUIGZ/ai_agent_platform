@@ -140,11 +140,23 @@ class StreamingWorkflow:
 
         memory_text = ""
         try:
-            memories = memory.retrieve_memories(user_id=user_id, query=task, top_k=3)
-            related = [m.get("full_content", m["content"]) for m in memories]
-            memory_text = "\n".join([f"- {m}" for m in related]) if related else ""
-        except Exception:
-            pass
+            # 使用混合检索 + 重排序
+            all_memories = memory.hybrid_retrieve(
+                user_id=user_id,
+                query=task,
+                top_k=5,
+                user_top_k=5,
+                kb_top_k=5
+            )
+            
+            if all_memories:
+                related = [m.get("full_content", m["content"]) for m in all_memories]
+                memory_text = "\n".join([f"- {m}" for m in related])
+            else:
+                memory_text = ""
+        except Exception as e:
+            print(f"[recall_memories] 混合检索失败: {e}")
+            memory_text = ""
 
         combined = []
         if short_term_context:

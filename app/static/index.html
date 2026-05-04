@@ -147,10 +147,10 @@
                 <div class="stats-cards">
                     <div class="stat-card">
                         <div class="stat-icon blue">
-                            <i class="fa-solid fa-layer-group"></i>
+                            <i class="fa-solid fa-user"></i>
                         </div>
-                        <div class="stat-num" id="statTotal">0</div>
-                        <div class="stat-label">记忆总数</div>
+                        <div class="stat-num" id="statUserTotal">0</div>
+                        <div class="stat-label">用户记忆</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon green">
@@ -223,10 +223,13 @@
                         <div class="card-title">
                             <i class="fa-solid fa-magnifying-glass"></i>
                             搜索记忆
+                            <button class="btn-small" onclick="searchAllMemories()" style="margin-left: auto;">
+                                <i class="fa-solid fa-globe"></i> 全局搜索
+                            </button>
                         </div>
                         <div class="card-body">
                             <div class="search-row">
-                                <input type="text" id="searchQuery" class="search-input" placeholder="输入关键词搜索...">
+                                <input type="text" id="searchQuery" class="search-input" placeholder="输入关键词搜索当前用户记忆...">
                                 <button class="btn-search" onclick="searchMemories()">
                                     <i class="fa-solid fa-search"></i>
                                 </button>
@@ -240,12 +243,34 @@
                     <div class="card-title">
                         <i class="fa-solid fa-list"></i>
                         全部记忆
-                        <button class="btn-icon" onclick="loadMemories()" title="刷新">
-                            <i class="fa-solid fa-rotate"></i>
-                        </button>
+                        <div class="memory-actions">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="selectAllMemories" onchange="toggleSelectAllMemories()"> 全选
+                            </label>
+                            <button class="btn-small btn-danger" onclick="batchDeleteMemories()">
+                                <i class="fa-solid fa-trash-can"></i> 批量删除
+                            </button>
+                            <button class="btn-small btn-warning" onclick="clearAllUserMemories()">
+                                <i class="fa-solid fa-trash"></i> 全部清除
+                            </button>
+                            <button class="btn-icon" onclick="loadMemories()" title="刷新">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div id="memoryList" class="memory-list"></div>
+                        <div class="pagination" id="memoryPagination">
+                            <button class="btn-page" id="prevPage" onclick="changePage(-1)">
+                                <i class="fa-solid fa-chevron-left"></i> 上一页
+                            </button>
+                            <span class="page-info">
+                                第 <span id="currentPage">1</span> / <span id="totalPages">1</span> 页
+                            </span>
+                            <button class="btn-page" id="nextPage" onclick="changePage(1)">
+                                下一页 <i class="fa-solid fa-chevron-right"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

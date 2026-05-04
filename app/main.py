@@ -1,6 +1,12 @@
 import os
 
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+os.environ["TRANSFORMERS_NO_PYTHON_PROMPT"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+
 from fastapi import FastAPI
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
