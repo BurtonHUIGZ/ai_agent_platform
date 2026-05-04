@@ -190,6 +190,14 @@ function handleWebSocketMessage(msg, logEl, reportEl, statusEl) {
             statusEl.className = 'status-tag done';
             statusEl.innerHTML = '<span class="status-dot"></span>已完成';
             appendLog(logEl, 'complete', '🎉 任务执行完成！');
+            
+            // 添加评分功能
+            const taskId = data.task_id || currentTaskId;
+            if (taskId) {
+                lastTaskId = taskId;
+                addRatingButtons(data.result || data.content || "");
+            }
+            
             currentWs = null;
             break;
         
@@ -314,6 +322,69 @@ function appendStreamingLog(container, agent, content) {
 function clearStreamingContainers() {
     for (const key in streamingContainers) {
         delete streamingContainers[key];
+    }
+}
+
+let lastTaskId = null;
+let lastResponse = "";
+
+function addRatingButtons(response) {
+    const reportArea = document.getElementById("reportArea");
+    if (!reportArea) return;
+    
+    // 移除已有的评分按钮
+    const existing = document.getElementById("ratingButtons");
+    if (existing) existing.remove();
+    
+    // 创建评分按钮容器
+    const ratingDiv = document.createElement("div");
+    ratingDiv.id = "ratingButtons";
+    ratingDiv.className = "rating-buttons";
+    ratingDiv.innerHTML = `
+        <span class="rating-label">回答是否满意：</span>
+        <button class="btn-rating btn-good" onclick="submitRating(1)">
+            <i class="fa-solid fa-thumbs-up"></i> 满意
+        </button>
+        <button class="btn-rating btn-bad" onclick="submitRating(0)">
+            <i class="fa-solid fa-thumbs-down"></i> 不满意
+        </button>
+    `;
+    
+    reportArea.appendChild(ratingDiv);
+    lastResponse = response;
+}
+
+async function submitRating(rating) {
+    if (!currentTaskId && !lastTaskId) {
+        console.error("没有任务ID");
+        return;
+    }
+    
+    const taskId = currentTaskId || lastTaskId || "default";
+    
+    try {
+        const res = await fetch("/api/eval/feedback/rating", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                token: token
+            },
+            body: JSON.stringify({
+                session_id: taskId,
+                rating: rating
+            })
+        });
+        
+        const data = await res.json();
+        if (data.code === 200) {
+            // 隐藏评分按钮
+            const ratingDiv = document.getElementById("ratingButtons");
+            if (ratingDiv) {
+                ratingDiv.innerHTML = `<span class="rating-thanks">${rating === 1 ? '👍 感谢您的认可！' : '🙏 感谢您的反馈！'}</span>`;
+            }
+        }
+    } catch (e) {
+        console.error("评分失败:", e);
     }
 }
 

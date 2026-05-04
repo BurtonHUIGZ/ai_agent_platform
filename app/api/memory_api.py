@@ -43,11 +43,12 @@ class MemorySearchAll(BaseModel):
 @router.post("/search")
 def search_memories(req: MemorySearch, token: str = Header(None)):
     check(token, "memory.view")
-    results = memory.retrieve_memories(
+    results = memory.hybrid_retrieve(
         user_id=req.user_id,
         query=req.query,
         top_k=req.top_k,
-        memory_type=req.memory_type
+        user_top_k=req.top_k,
+        kb_top_k=req.top_k
     )
     return {"code": 200, "data": results}
 

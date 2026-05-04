@@ -77,6 +77,7 @@ class WebSocketManager:
         msg = {
             "type": "complete",
             "result": final_result,
+            "task_id": task_id,
             "timestamp": datetime.now().isoformat()
         }
         await self.broadcast(task_id, msg)

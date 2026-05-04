@@ -48,7 +48,7 @@ def _create_rag_tools():
         try:
             import time
             start = time.time()
-            results = memory.retrieve_memories(user_id="default", query=query, top_k=top_k)
+            results = memory.hybrid_retrieve(user_id="default", query=query, top_k=top_k, user_top_k=top_k, kb_top_k=top_k)
             latency_ms = (time.time() - start) * 1000
             
             if not results:
@@ -73,7 +73,7 @@ def _create_rag_tools():
     def _search_user_memory(query: str) -> str:
         """搜索用户历史记忆和偏好"""
         try:
-            results = memory.retrieve_memories(user_id="default", query=query, top_k=3)
+            results = memory.hybrid_retrieve(user_id="default", query=query, top_k=3, user_top_k=3, kb_top_k=3)
             if not results:
                 return "未找到用户偏好或历史记录"
             return "\n".join([r.get("content", "") for r in results])

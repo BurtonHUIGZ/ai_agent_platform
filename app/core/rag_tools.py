@@ -21,10 +21,12 @@ def search_knowledge_base(query: str, top_k: int = 5, session_id: str = "default
     """
     try:
         start = time.time()
-        results = memory.retrieve_memories(
+        results = memory.hybrid_retrieve(
             user_id="default",
             query=query,
-            top_k=top_k
+            top_k=top_k,
+            user_top_k=top_k,
+            kb_top_k=top_k
         )
         latency_ms = (time.time() - start) * 1000
         
@@ -34,7 +36,7 @@ def search_knowledge_base(query: str, top_k: int = 5, session_id: str = "default
         formatted_results = []
         for i, item in enumerate(results, 1):
             content = item.get("content", "")
-            similarity = item.get("similarity", 0)
+            similarity = item.get("similarity", item.get("bm25_score", 0))
             formatted_results.append(f"{i}. {content} (相关度: {similarity:.2f})")
         
         result_text = "\n\n".join(formatted_results)
@@ -67,11 +69,12 @@ def search_user_memory(query: str) -> str:
         用户相关记忆
     """
     try:
-        results = memory.retrieve_memories(
+        results = memory.hybrid_retrieve(
             user_id="default",
             query=query,
-            memory_type="preference",
-            top_k=3
+            top_k=3,
+            user_top_k=3,
+            kb_top_k=3
         )
         
         if not results:

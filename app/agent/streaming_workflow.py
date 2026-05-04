@@ -17,6 +17,7 @@ from app.core.rag_eval import rag_realtime_evaluator
 from langchain_core.messages import HumanMessage
 from app.settings import settings
 from app.core.metrics import metrics
+from app.core.anti_hallucination import anti_hallucination
 
 print(f"[DEBUG LLM ENV] {debug_llm_env()}")
 
@@ -282,13 +283,27 @@ class StreamingWorkflow:
         task_id = state.get("task_id", "unknown")
         task = state["task"]
 
-        prompt = f"""{short_term_context}
+        from app.agent.tasks import load_prompts
+        prompts = load_prompts()
+        citation_prompt = prompts.get("anti_hallucination_citation", "")
+
+        if memories_context and memories_context.strip():
+            # 有检索结果，添加引用要求
+            prompt = f"""{short_term_context}
 
 {memories_context}
 
 用户：{task}
 
-请直接回答用户，不需要执行任何任务。"""
+请直接回答用户。
+
+{citation_prompt}"""
+        else:
+            prompt = f"""{short_term_context}
+
+用户：{task}
+
+请直接回答用户。"""
 
         await self.send_func(task_id, "agent_start", "executor", {
             "role": "💬 助手",
@@ -1058,10 +1073,12 @@ async def run_streaming_task(task_id: str, task_content: str, user_id: str, send
         
         try:
             loop = asyncio.get_event_loop()
-            retrieved_results = memory.retrieve_memories(
+            retrieved_results = memory.hybrid_retrieve(
                 user_id=user_id,
                 query=task_content,
-                top_k=5
+                top_k=5,
+                user_top_k=5,
+                kb_top_k=5
             )
             eval_result = await loop.run_in_executor(
                 None,
@@ -1096,10 +1113,12 @@ async def run_streaming_task(task_id: str, task_content: str, user_id: str, send
             final_response = result.get("final_report", "")[:500]
         
         try:
-            retrieved_results = memory.retrieve_memories(
+            retrieved_results = memory.hybrid_retrieve(
                 user_id=user_id,
                 query=task_content,
-                top_k=5
+                top_k=5,
+                user_top_k=5,
+                kb_top_k=5
             )
             retrieved_doc_ids = [r["id"] for r in retrieved_results]
             eval_db.add_feedback(FeedbackRecord(

@@ -44,10 +44,12 @@ class RAGEvaluator:
     def evaluate_single(self, case: EvalCase) -> EvalResult:
         start = time.time()
         
-        results = memory.retrieve_memories(
+        results = memory.hybrid_retrieve(
             user_id="default",
             query=case.query,
-            top_k=self.top_k
+            top_k=self.top_k,
+            user_top_k=self.top_k,
+            kb_top_k=self.top_k
         )
         
         latency_ms = (time.time() - start) * 1000

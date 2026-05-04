@@ -1247,3 +1247,48 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+.rating-buttons {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+}
+
+.rating-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.btn-rating {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-white);
+    font-size: 13px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+}
+
+.btn-rating.btn-good:hover {
+    background: #e8f5e9;
+    border-color: var(--green);
+    color: var(--green);
+}
+
+.btn-rating.btn-bad:hover {
+    background: #ffebee;
+    border-color: var(--red);
+    color: var(--red);
+}
+
+.rating-thanks {
+    font-size: 13px;
+    color: var(--text-secondary);
+}

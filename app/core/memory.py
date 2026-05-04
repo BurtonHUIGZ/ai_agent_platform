@@ -123,19 +123,11 @@ class LongTermMemory:
         
         self.embedding_model = "nomic-embed-text"
         self._embeddings = None
-        self._reranker = None
-
-    def _get_reranker(self):
-        if self._reranker is None:
-            try:
-                import torch
-                from sentence_transformers import CrossEncoder
-                self._reranker = CrossEncoder("BAAI/bge-reranker-base")
-                print("[Memory] Reranker 加载成功")
-            except Exception as e:
-                print(f"[Memory] 加载 reranker 失败: {e}")
-                self._reranker = False
-        return self._reranker if self._reranker else None
+        self._bm25_index = None
+        self._bm25_corpus = None
+        
+        # 延迟初始化 BM25 索引
+        self._bm25_initialized = False
 
     def _get_embeddings(self):
         if self._embeddings is None:
@@ -310,6 +302,106 @@ class LongTermMemory:
             print(f"[Memory] 查询 collection 失败: {e}")
             return []
 
+    def _init_bm25_index(self):
+        """初始化 BM25 索引"""
+        if not hasattr(self, '_bm25_index') or self._bm25_index is None:
+            from rank_bm25 import BM25Okapi
+            self._BM25Okapi = BM25Okapi  # 保存类引用
+            self._bm25_index = {}
+            self._bm25_corpus = {}
+        return self._bm25_index, self._bm25_corpus
+
+    def _get_bm25_results(self, collection_name: str, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """BM25 关键词检索"""
+        bm25_index, bm25_corpus = self._init_bm25_index()
+        
+        # 如果索引不存在，构建它
+        if collection_name not in bm25_index or not bm25_corpus.get(collection_name):
+            if collection_name == "user_memories":
+                self._build_bm25_index(self.user_collection, "user_memories")
+            elif collection_name == "knowledge_base":
+                self._build_bm25_index(self.knowledge_collection, "knowledge_base")
+        
+        if collection_name not in bm25_index:
+            return []
+        
+        if not bm25_corpus.get(collection_name):
+            return []
+        
+        tokenized_query = query.lower().split()
+        scores = bm25_index[collection_name].get_scores(tokenized_query)
+        
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        
+        results = []
+        for idx in top_indices:
+            if scores[idx] > 0:
+                doc = bm25_corpus[collection_name][idx]
+                results.append({
+                    "id": doc.get("id", f"bm25_{idx}"),
+                    "content": doc.get("content", ""),
+                    "full_content": doc.get("full_content", doc.get("content", "")),
+                    "metadata": doc.get("metadata", {}),
+                    "bm25_score": scores[idx],
+                    "collection": collection_name
+                })
+        
+        return results
+
+    def _build_bm25_index(self, collection, collection_name: str):
+        """构建 BM25 索引"""
+        bm25_index, bm25_corpus = self._init_bm25_index()
+        
+        try:
+            results = collection.get(include=["documents", "metadatas"])
+            if not results.get("documents"):
+                return
+            
+            ids = results.get("ids", [])
+            corpus = []
+            for i, doc in enumerate(results["documents"]):
+                meta = results["metadatas"][i] if results.get("metadatas") else {}
+                corpus.append({
+                    "id": ids[i] if i < len(ids) else f"doc_{i}",
+                    "content": doc,
+                    "metadata": meta
+                })
+            
+            bm25_corpus[collection_name] = corpus
+            
+            tokenized_corpus = [doc["content"].lower().split() for doc in corpus]
+            bm25_index[collection_name] = self._BM25Okapi(tokenized_corpus)
+            
+            print(f"[Memory] BM25 索引构建完成: {collection_name}, {len(corpus)} 条文档")
+        except Exception as e:
+            print(f"[Memory] BM25 索引构建失败: {e}")
+
+    def _rrf_fusion(self, results_list: List[List[Dict[str, Any]]], k: int = 60) -> List[Dict[str, Any]]:
+        """RRF (Reciprocal Rank Fusion) 融合算法"""
+        doc_scores = {}
+        
+        for results in results_list:
+            for rank, doc in enumerate(results, 1):
+                doc_id = doc.get("id", f"doc_{rank}")
+                if doc_id not in doc_scores:
+                    doc_scores[doc_id] = {
+                        "doc": doc,
+                        "score": 0.0,
+                        "sources": []
+                    }
+                rrf_score = 1.0 / (k + rank)
+                doc_scores[doc_id]["score"] += rrf_score
+                doc_scores[doc_id]["sources"].append(doc.get("collection", "unknown"))
+        
+        fused = sorted(doc_scores.values(), key=lambda x: x["score"], reverse=True)
+        # 保留 RRF 分数并添加到结果中
+        result = []
+        for item in fused:
+            doc = item["doc"].copy()
+            doc["rrf_score"] = item["score"]
+            result.append(doc)
+        return result
+
     def hybrid_retrieve(
             self,
             user_id: str,
@@ -321,52 +413,41 @@ class LongTermMemory:
         """混合检索 + 重排序"""
         import concurrent.futures
         
-        # 并行检索两个 collection
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            user_future = executor.submit(
+        # 并行检索：向量检索 + BM25
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            user_vec_future = executor.submit(
                 self._query_single_collection, 
                 self.user_collection, user_id, query, user_top_k
             )
-            kb_future = executor.submit(
+            kb_vec_future = executor.submit(
                 self._query_single_collection,
                 self.knowledge_collection, user_id, query, kb_top_k
             )
+            user_bm25_future = executor.submit(
+                self._get_bm25_results, "user_memories", query, user_top_k
+            )
+            kb_bm25_future = executor.submit(
+                self._get_bm25_results, "knowledge_base", query, kb_top_k
+            )
             
-            user_memories = user_future.result()
-            kb_memories = kb_future.result()
+            user_vec = user_vec_future.result()
+            kb_vec = kb_vec_future.result()
+            user_bm25 = user_bm25_future.result()
+            kb_bm25 = kb_bm25_future.result()
         
-        # 合并结果
-        all_memories = user_memories + kb_memories
+        # RRF 融合：合并向量检索和 BM25 结果
+        results_list = [user_vec, kb_vec, user_bm25, kb_bm25]
+        fused_memories = self._rrf_fusion(results_list, k=60)
         
-        if not all_memories:
-            return []
+        # 提升用户记忆权重（在 RRF 分数上）
+        for m in fused_memories:
+            if m.get("collection") == "user_memories":
+                m["rrf_score"] = m.get("rrf_score", 1.0) * 1.3
         
-        # 使用 Cross-Encoder 重排序
-        reranker = self._get_reranker()
-        if reranker:
-            try:
-                # 准备 reranker 输入
-                doc_texts = [m["content"] for m in all_memories]
-                pairs = [[query, doc] for doc in doc_texts]
-                
-                # 获取 reranker 分数
-                scores = reranker.predict(pairs)
-                
-                # 更新分数
-                for i, m in enumerate(all_memories):
-                    m["rerank_score"] = float(scores[i])
-                    # 给予用户记忆一定权重提升
-                    if m.get("collection") == "user_memories":
-                        m["rerank_score"] *= 1.2
-                
-                # 按重排序分数排序
-                all_memories.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
-            except Exception as e:
-                print(f"[Memory] 重排序失败: {e}")
-                # 降级使用相似度排序
-                all_memories.sort(key=lambda x: x.get("similarity", 0), reverse=True)
+        # 按 RRF 分数排序
+        fused_memories.sort(key=lambda x: x.get("rrf_score", 0), reverse=True)
         
-        return all_memories[:top_k]
+        return fused_memories[:top_k]
 
     def _calc_time_weight(self, created_at: str) -> float:
         try:
