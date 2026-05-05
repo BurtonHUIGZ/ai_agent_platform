@@ -6,6 +6,7 @@ from app.llm.model_factory import ModelFactory
 from app.core.eval_db import eval_db
 from app.core.eval_types import FeedbackRecord
 from app.settings import get_model_config, settings
+from app.utils.logger import rag_logger as logger
 
 
 class RAGRealTimeEvaluator:
@@ -54,7 +55,7 @@ class RAGRealTimeEvaluator:
 {{"relevance": 0.8, "completeness": 0.7, "diversity": 0.9}}"""
 
             response = eval_llm.call(prompt)
-            print(f"[RAG评估] LLM原始返回(retrieval): {response}")
+            logger.debug(f"LLM原始返回(retrieval): {response}")
 
             import json
             import re
@@ -70,7 +71,7 @@ class RAGRealTimeEvaluator:
                 decoder = json.JSONDecoder()
                 scores, _ = decoder.raw_decode(cleaned)
             except Exception as e:
-                print(f"[RAG评估] JSON解析失败(retrieval): {e}, 原始返回: {response}")
+                logger.warning(f"JSON解析失败(retrieval): {e}, 原始返回: {response}")
                 scores = {"relevance": 0.5, "completeness": 0.5, "diversity": 0.5}
             
             overall_score = (
@@ -97,7 +98,7 @@ class RAGRealTimeEvaluator:
             }
             
         except Exception as e:
-            print(f"[RAGRealTimeEvaluator] 评估失败: {e}")
+            logger.error(f"评估失败: {e}")
             return {"enabled": True, "error": str(e)}
     
     def evaluate_response(
@@ -136,7 +137,7 @@ class RAGRealTimeEvaluator:
 {{"accuracy": 0.8, "completeness": 0.7, "groundedness": 0.9, "helpfulness": 0.8}}"""
 
             response_text = eval_llm.call(prompt)
-            print(f"[RAG评估] LLM原始返回(response): {response_text}")
+            logger.debug(f"LLM原始返回(response): {response_text}")
 
             import json
             import re
@@ -152,7 +153,7 @@ class RAGRealTimeEvaluator:
                 decoder = json.JSONDecoder()
                 scores, _ = decoder.raw_decode(cleaned)
             except Exception as e:
-                print(f"[RAG评估] JSON解析失败(response): {e}, 原始返回: {response_text}")
+                logger.warning(f"JSON解析失败(response): {e}, 原始返回: {response_text}")
                 scores = {
                     "accuracy": 0.5,
                     "completeness": 0.5,
@@ -179,7 +180,7 @@ class RAGRealTimeEvaluator:
             }
             
         except Exception as e:
-            print(f"[RAGRealTimeEvaluator] 回答评估失败: {e}")
+            logger.error(f"回答评估失败: {e}")
             return {"enabled": True, "error": str(e)}
     
     def enable(self):

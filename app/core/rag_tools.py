@@ -3,6 +3,7 @@ from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun
 from app.core.memory import memory
 from app.core.rag_eval import rag_realtime_evaluator
+from app.utils.logger import rag_logger as logger
 import time
 
 
@@ -48,9 +49,9 @@ def search_knowledge_base(query: str, top_k: int = 5, session_id: str = "default
                 session_id=session_id,
                 latency_ms=latency_ms
             )
-            print(f"[RAG评估] 检索评估完成: {eval_result.get('overall_score', 'N/A')}")
+            logger.info(f"检索评估完成: {eval_result.get('overall_score', 'N/A')}")
         except Exception as eval_error:
-            print(f"[RAG评估] 评估失败: {eval_error}")
+            logger.warning(f"评估失败: {eval_error}")
         
         return result_text
     except Exception as e:

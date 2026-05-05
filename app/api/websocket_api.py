@@ -11,6 +11,7 @@ from app.core.websocket_manager import ws_manager
 from app.agent.streaming_workflow import run_streaming_task
 from app.core.task_queue import TASKS
 from app.core.memory import memory
+from app.core.document_splitter import split_document
 
 ws_router = APIRouter(prefix="/ws")
 
@@ -147,7 +148,7 @@ async def upload_file(
     try:
         filename = file.filename or "unknown"
         file_extension = os.path.splitext(filename)[1].lower()
-        if file_extension not in [".txt", ".pdf", ".docx"]:
+        if file_extension not in [".txt", ".pdf", ".docx", ".md", ".markdown"]:
             await ws_manager.broadcast(upload_id, {
                 "type": "upload_error",
                 "error": "不支持的文件格式",
@@ -167,9 +168,10 @@ async def upload_file(
         })
         
         try:
-            text = await extract_text_from_file(tmp_path, file_extension)
+            # 使用生产级分块
+            chunks = split_document(tmp_path, source_file=filename)
             
-            if not text.strip():
+            if not chunks:
                 await ws_manager.broadcast(upload_id, {
                     "type": "upload_error",
                     "error": "文件内容为空",
@@ -177,53 +179,47 @@ async def upload_file(
                 })
                 return {"code": 400, "msg": "文件内容为空"}
             
-            await ws_manager.broadcast(upload_id, {
-                "type": "upload_status",
-                "message": "正在分块...",
-                "progress": 30
-            })
-            
-            chunks = split_text(text)
             total = len(chunks)
+            doc_type = chunks[0]["metadata"].get("doc_type", "unknown")
             
             await ws_manager.broadcast(upload_id, {
                 "type": "upload_status",
-                "message": f"开始处理 {total} 个片段...",
-                "progress": 40,
+                "message": f"检测到文档类型: {doc_type}, 开始处理 {total} 个片段...",
+                "progress": 30,
                 "total_chunks": total
             })
             
-            for i, chunk in enumerate(chunks):
-                memory.add_memory(
-                    user_id=user_id,
-                    content=chunk,
-                    memory_type=memory_type,
-                    metadata={
-                        "source_file": file.filename,
-                        "chunk_index": i,
-                        "total_chunks": total
-                    }
-                )
-                
-                chunk_progress = 40 + int((i + 1) / total * 55)
-                await ws_manager.broadcast(upload_id, {
-                    "type": "upload_progress",
-                    "progress": chunk_progress,
-                    "chunk_index": i,
-                    "total_chunks": total,
-                    "status": "uploading"
+            # 批量添加
+            contents = [
+                (chunk["content"], {
+                    "source_file": filename,
+                    "memory_type": memory_type,
+                    **chunk.get("metadata", {})
                 })
-                
-                await asyncio.sleep(0.1)
+                for chunk in chunks
+            ]
+            
+            # 发送进度
+            await ws_manager.broadcast(upload_id, {
+                "type": "upload_progress",
+                "progress": 50,
+                "chunk_index": 0,
+                "total_chunks": total,
+                "status": "uploading"
+            })
+            
+            # 批量添加
+            memory_ids = memory.add_memories(user_id, contents, memory_type)
             
             await ws_manager.broadcast(upload_id, {
                 "type": "upload_complete",
                 "progress": 100,
-                "chunks": total,
+                "chunks": len(memory_ids),
+                "doc_type": doc_type,
                 "status": "completed"
             })
             
-            return {"code": 200, "msg": "上传成功", "chunks": total}
+            return {"code": 200, "msg": "上传成功", "chunks": len(memory_ids), "doc_type": doc_type}
             
         finally:
             os.unlink(tmp_path)

@@ -9,6 +9,7 @@ import math
 from collections import OrderedDict
 
 from app.settings import CHROMA_PATH
+from app.utils.logger import memory_logger as logger
 
 MAX_EMBEDDING_TOKENS = 2000
 
@@ -158,52 +159,100 @@ class LongTermMemory:
             full_content: Optional[str] = None,
             metadata: Optional[Dict[str, Any]] = None
     ) -> str:
-        memory_id = str(uuid.uuid4())
+        """添加单条记忆"""
+        # 批量添加的简化版本
+        return self.add_memories(user_id, [(content, metadata or {})], memory_type)[0]
 
-        metadata = metadata or {}
-        metadata.update({
-            "user_id": user_id,
-            "memory_type": memory_type,
-            "created_at": datetime.now().isoformat(),
-            "db_id": memory_id
-        })
-
-        # 根据类型选择 collection
+    def add_memories(
+            self,
+            user_id: str,
+            contents: List[tuple],
+            memory_type: str = "general"
+    ) -> List[str]:
+        """
+        批量添加记忆
+        
+        Args:
+            user_id: 用户ID
+            contents: List[(content, metadata), ...]
+            memory_type: 记忆类型
+        
+        Returns:
+            List[memory_id]
+        """
+        if not contents:
+            return []
+        
+        ids = []
+        embeddings = []
+        documents = []
+        metadatas = []
+        sqlite_data = []
+        
+        for content, metadata in contents:
+            memory_id = str(uuid.uuid4())
+            ids.append(memory_id)
+            
+            summary = content[:500] if len(content) > 500 else content
+            
+            metadata = metadata or {}
+            # 过滤掉 None 值，ChromaDB 不接受 None
+            metadata = {k: v for k, v in metadata.items() if v is not None}
+            metadata.update({
+                "user_id": user_id,
+                "memory_type": memory_type,
+                "created_at": datetime.now().isoformat(),
+                "db_id": memory_id
+            })
+            metadatas.append(metadata)
+            documents.append(summary)
+            
+            sqlite_data.append((memory_id, summary, content, user_id, memory_type, datetime.now().isoformat()))
+        
+        # 批量获取 embedding
+        try:
+            summaries = [doc[:500] if len(doc) > 500 else doc for doc in documents]
+            embeddings = self._get_embeddings().embed_documents(summaries)
+            logger.debug(f"批量获取embedding成功, {len(embeddings)} 条")
+        except Exception as e:
+            logger.error(f"批量获取embedding失败: {e}")
+            # 使用单个 embedding
+            embeddings = []
+            for doc in documents:
+                try:
+                    emb = self._get_embedding(doc)
+                    embeddings.append(emb)
+                except:
+                    embeddings.append([0] * 384)  # 默认维度
+        
+        # 获取 collection
         collection = self._get_collection(memory_type)
         
-        summary = content[:500] if len(content) > 500 else content
-
-        try:
-            embedding = self._get_embedding(summary)
-            print(f"[LongTermMemory] 获取embedding成功, summary长度={len(summary)}, embedding维度={len(embedding)}")
-        except Exception as e:
-            print(f"[LongTermMemory] 获取embedding失败: {e}")
-            raise
-
+        # 批量添加到 ChromaDB
         try:
             collection.add(
-                ids=[memory_id],
-                embeddings=[embedding],
-                documents=[summary],
-                metadatas=[metadata]
+                ids=ids,
+                embeddings=embeddings,
+                documents=documents,
+                metadatas=metadatas
             )
-            print(f"[LongTermMemory] 已添加到collection, id={memory_id}")
+            logger.info(f"批量添加到collection成功: {len(ids)} 条")
         except Exception as e:
-            print(f"[LongTermMemory] collection.add失败: {e}")
-            raise
-
+            logger.error(f"批量添加到collection失败: {e}")
+        
+        # 批量添加到 SQLite
         try:
             conn = _get_sqlite_conn()
-            conn.execute("""
+            conn.executemany("""
                 INSERT INTO memory_fulltext (id, summary, full_content, user_id, memory_type, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, [memory_id, summary, full_content or content, user_id, memory_type, datetime.now().isoformat()])
+            """, sqlite_data)
             conn.commit()
-            print(f"[LongTermMemory] 已保存到SQLite, id={memory_id}")
+            logger.info(f"批量保存到SQLite成功: {len(sqlite_data)} 条")
         except Exception as e:
-            print(f"[LongTermMemory] SQLite保存失败: {e}")
-
-        return memory_id
+            logger.error(f"批量保存到SQLite失败: {e}")
+        
+        return ids
 
     def retrieve_memories(
             self,
@@ -238,7 +287,7 @@ class LongTermMemory:
                     full_content = row[0] if row else None
                     created_at = row[1] if row else metadata.get("created_at", "")
                 except Exception as e:
-                    print(f"[LongTermMemory] 读取全文失败: {e}")
+                    logger.warning(f"读取全文失败: {e}")
                     full_content = None
                     created_at = metadata.get("created_at", "")
                 
@@ -299,7 +348,7 @@ class LongTermMemory:
                     })
             return memories
         except Exception as e:
-            print(f"[Memory] 查询 collection 失败: {e}")
+            logger.error(f"查询 collection 失败: {e}")
             return []
 
     def _init_bm25_index(self):
@@ -372,9 +421,9 @@ class LongTermMemory:
             tokenized_corpus = [doc["content"].lower().split() for doc in corpus]
             bm25_index[collection_name] = self._BM25Okapi(tokenized_corpus)
             
-            print(f"[Memory] BM25 索引构建完成: {collection_name}, {len(corpus)} 条文档")
+            logger.info(f"BM25 索引构建完成: {collection_name}, {len(corpus)} 条文档")
         except Exception as e:
-            print(f"[Memory] BM25 索引构建失败: {e}")
+            logger.error(f"BM25 索引构建失败: {e}")
 
     def _rrf_fusion(self, results_list: List[List[Dict[str, Any]]], k: int = 60) -> List[Dict[str, Any]]:
         """RRF (Reciprocal Rank Fusion) 融合算法"""

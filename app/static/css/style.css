@@ -1292,3 +1292,166 @@ body {
     font-size: 13px;
     color: var(--text-secondary);
 }
+
+/* ==================== 自定义弹窗组件 ==================== */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+.modal-overlay.active {
+    opacity: 1;
+    visibility: visible;
+    background: rgba(0, 0, 0, 0.6);
+    pointer-events: auto;
+}
+
+.modal-box {
+    background: var(--bg-white);
+    border-radius: 16px;
+    padding: 28px;
+    width: 90%;
+    max-width: 380px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+    transform: scale(0.8) translateY(20px);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.modal-overlay.active .modal-box {
+    transform: scale(1) translateY(0);
+}
+
+.modal-title {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.modal-title i {
+    font-size: 22px;
+}
+
+.modal-title.success { color: var(--green); }
+.modal-title.error { color: var(--red); }
+.modal-title.warning { color: #f59e0b; }
+.modal-title.info { color: var(--blue); }
+.modal-title.danger { color: var(--red); }
+
+.modal-message {
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.7;
+    margin-bottom: 28px;
+    text-align: center;
+}
+
+.modal-buttons {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+}
+
+.modal-buttons .btn {
+    flex: 1;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.modal-buttons .btn-cancel {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.modal-buttons .btn-cancel:hover {
+    background: #e5e5e5;
+}
+
+.modal-buttons .btn-confirm {
+    background: var(--blue);
+    color: white;
+}
+
+.modal-buttons .btn-confirm:hover {
+    background: var(--blue-hover);
+}
+
+.modal-buttons .btn-danger {
+    background: var(--red);
+    color: white;
+}
+
+.modal-buttons .btn-danger:hover {
+    background: #d32f2f;
+}
+
+/* Toast 提示消息 - 底部居中 */
+.toast-container {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.toast {
+    background: #323232;
+    color: white;
+    border-radius: 30px;
+    padding: 14px 28px;
+    min-width: 200px;
+    max-width: 90%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    transform: translateY(100px) scale(0.9);
+    opacity: 0;
+    transition: all 0.3s ease;
+}
+
+.toast.show {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+}
+
+.toast i {
+    font-size: 16px;
+}
+
+.toast.success i { color: #4caf50; }
+.toast.error i { color: #f44336; }
+.toast.warning i { color: #ff9800; }
+.toast.info i { color: #2196f3; }
+
+.toast-message {
+    flex: 1;
+    font-size: 14px;
+    text-align: center;
+}

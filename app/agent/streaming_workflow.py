@@ -18,9 +18,11 @@ from langchain_core.messages import HumanMessage
 from app.settings import settings
 from app.core.metrics import metrics
 from app.core.anti_hallucination import anti_hallucination
+from app.utils.logger import agent_logger as logger
 
-print(f"[DEBUG LLM ENV] {debug_llm_env()}")
 
+# 初始化日志
+logger.info(f"LLM ENV: {debug_llm_env()}")
 
 def _get_task_factory():
     from app.agent.tasks import TaskFactory
@@ -156,7 +158,7 @@ class StreamingWorkflow:
             else:
                 memory_text = ""
         except Exception as e:
-            print(f"[recall_memories] 混合检索失败: {e}")
+            logger.warning(f"[recall_memories] 混合检索失败: {e}")
             memory_text = ""
 
         combined = []
@@ -202,8 +204,8 @@ class StreamingWorkflow:
             route_decision = self._parse_route_decision(raw_output)
             task_type = route_decision["task_type"]
 
-            print(f"[ROUTER] raw_output: {raw_output[:200]}...")
-            print(f"[ROUTER] task_type: {task_type}, reason: {route_decision['reason']}")
+            logger.info(f"[ROUTER] raw_output: {raw_output[:200]}...")
+            logger.info(f"[ROUTER] task_type: {task_type}, reason: {route_decision['reason']}")
 
             await self.send_func(task_id, "thinking", "router", {
                 "content": f"✅ 路由决策：{task_type} | {route_decision['reason']}",
@@ -215,8 +217,7 @@ class StreamingWorkflow:
                 "route_decision": route_decision
             }
         except Exception as e:
-            import loguru
-            logger = loguru.logger
+            import traceback
             logger.error(f"路由分析失败: {e}\nraw_output: {raw_output}")
             await self.send_func(task_id, "thinking", "router", {
                 "content": f"⚠️ 路由分析失败，使用默认决策: {str(e)}",
@@ -535,7 +536,7 @@ class StreamingWorkflow:
         route_decision = state.get("route_decision", {})
         task_type = route_decision.get("task_type", "complex")
 
-        print(f"[save_memory] task_type={task_type}, task={task[:30]}...")
+        logger.info(f"[save_memory] task_type={task_type}, task={task[:30]}...")
 
         short_term_memory.add(session_id, "user", task)
         short_term_memory.add(session_id, "assistant", result)
@@ -570,11 +571,11 @@ class StreamingWorkflow:
                                 lambda: llm.call(f"用30字以内总结：{result[:MAX_EMBEDDING_TOKENS]}")
                             )
                         summary = response.content if hasattr(response, 'content') else str(response)
-                        print(f"[save_memory] 摘要生成成功: {summary}")
+                        logger.info(f"[save_memory] 摘要生成成功: {summary}")
                         content = f"用户需求：{task[:500]}\n摘要：{summary}"
                     except Exception as e:
                         import traceback
-                        print(f"[save_memory] 摘要生成失败: {e}")
+                        logger.error(f"[save_memory] 摘要生成失败: {e}")
                         traceback.print_exc()
                         content = f"用户需求：{task[:500]}\n执行结果：{result[:2000]}...[已截断]"
                 else:
@@ -589,7 +590,7 @@ class StreamingWorkflow:
                 if len(content) > 3500:
                     content = content[:3500] + "..."
             
-            print(f"[save_memory] 准备保存 memory_type={memory_type}, task_type={task_type}, content_len={len(content)}")
+            logger.info(f"[save_memory] 准备保存 memory_type={memory_type}, task_type={task_type}, content_len={len(content)}")
 
             if memory_type == "task":
                 memory_id = memory.add_memory(
@@ -599,7 +600,7 @@ class StreamingWorkflow:
                     memory_type="task",
                     metadata={"task_id": task_id, "original_task_type": task_type}
                 )
-                print(f"[save_memory] 已保存 task 记忆, id={memory_id}")
+                logger.info(f"[save_memory] 已保存 task 记忆, id={memory_id}")
             elif memory_type == "question":
                 memory.add_memory(
                     user_id=user_id,
@@ -618,7 +619,7 @@ class StreamingWorkflow:
                 )
         except Exception as e:
             import traceback
-            print(f"[save_memory] 错误: {e}")
+            logger.error(f"[save_memory] 错误: {e}")
             traceback.print_exc()
 
         return {}
@@ -1089,14 +1090,14 @@ async def run_streaming_task(task_id: str, task_content: str, user_id: str, send
                     session_id=session_id
                 )
             )
-            print(f"[RAG评估] 回答评估完成: {eval_result.get('overall_score', 'N/A')}")
+            logger.info(f"[RAG评估] 回答评估完成: {eval_result.get('overall_score', 'N/A')}")
             
             await send_func(task_id, "rag_eval", "system", {
                 "content": "RAG评估完成",
                 "eval_result": eval_result
             })
         except Exception as eval_error:
-            print(f"[RAG评估] 回答评估失败: {eval_error}")
+            logger.error(f"[RAG评估] 回答评估失败: {eval_error}")
         
         return final_report
     except Exception as e:
@@ -1130,4 +1131,4 @@ async def run_streaming_task(task_id: str, task_content: str, user_id: str, send
                 latency_ms=duration * 1000
             ))
         except Exception as e:
-            print(f"[EVAL] Feedback record failed: {e}")
+            logger.error(f"[EVAL] Feedback record failed: {e}")

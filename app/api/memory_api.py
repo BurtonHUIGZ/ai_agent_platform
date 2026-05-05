@@ -4,6 +4,12 @@ from typing import Optional, List, Dict, Any
 import jieba
 from app.core.memory import memory, short_term_memory
 from app.core.user_system import check
+from app.core.document_splitter import (
+    split_document,                   # 自动识别文档类型 + 生产级分块
+    production_split_text,             # 文本直接分块
+    DocumentParserFactory,           # 解析器工厂
+    ProductionLevelSplitter        # 备用
+)
 import tempfile
 import os
 
@@ -234,14 +240,21 @@ async def upload_file(
     memory_type: str = Form("knowledge"),
     token: str = Header(None)
 ):
+    """
+    上传知识库文档
+    
+    自动识别文档类型（PDF/TXT/DOCX/Markdown）
+    自动使用生产级分块（层级感知 + 丰富元数据）
+    """
     check(token, "memory.write")
     
     if not file.filename:
         return {"code": 400, "msg": "未选择文件"}
     
     file_extension = os.path.splitext(file.filename)[1].lower()
-    if file_extension not in [".txt", ".pdf", ".docx"]:
-        return {"code": 400, "msg": "不支持的文件格式，仅支持 PDF/TXT/DOCX"}
+    supported = [".txt", ".pdf", ".docx", ".md", ".markdown"]
+    if file_extension not in supported:
+        return {"code": 400, "msg": f"不支持的文件格式，仅支持 {', '.join(supported)}"}
     
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
         content = await file.read()
@@ -249,28 +262,32 @@ async def upload_file(
         tmp_path = tmp.name
     
     try:
-        text = extract_text_from_file(tmp_path, file_extension)
+        # 自动检测文档类型 + 生产级分块
+        chunks = split_document(tmp_path, source_file=file.filename)
         
-        if not text.strip():
+        if not chunks:
             return {"code": 400, "msg": "文件内容为空"}
         
-        chunks = split_text(text)
+        doc_type = chunks[0]["metadata"].get("doc_type", "unknown")
         
-        added_count = 0
-        for i, chunk in enumerate(chunks):
-            memory.add_memory(
-                user_id=user_id,
-                content=chunk,
-                memory_type=memory_type,
-                metadata={
-                    "source_file": file.filename,
-                    "chunk_index": i,
-                    "total_chunks": len(chunks)
-                }
-            )
-            added_count += 1
+        # 批量添加
+        contents = [
+            (chunk["content"], {
+                "source_file": file.filename,
+                "memory_type": memory_type,
+                **chunk.get("metadata", {})
+            })
+            for chunk in chunks
+        ]
         
-        return {"code": 200, "msg": "上传成功", "chunks": added_count}
+        memory_ids = memory.add_memories(user_id, contents, memory_type)
+        
+        return {
+            "code": 200, 
+            "msg": f"上传成功 (文档类型: {doc_type})", 
+            "chunks": len(memory_ids),
+            "doc_type": doc_type
+        }
     
     except Exception as e:
         return {"code": 500, "msg": str(e)}

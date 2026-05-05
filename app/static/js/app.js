@@ -2,6 +2,29 @@ let token = localStorage.getItem("token");
 let currentWs = null;
 let currentTaskId = null;
 
+// 加载记忆统计数据
+async function loadMemoryStats() {
+    try {
+        const res = await fetch("/api/memory/stats/default", {
+            headers: { token: token }
+        });
+        if (res.status === 401) {
+            localStorage.removeItem("token");
+            token = null;
+            showLogin();
+            return;
+        }
+        const data = await res.json();
+        if (data.data) {
+            document.getElementById("statUserTotal").textContent = data.data.user_total || 0;
+            document.getElementById("statTask").textContent = data.data.by_type?.task || 0;
+            document.getElementById("statKnowledge").textContent = data.data.knowledge_total || 0;
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
 window.onload = function () {
     checkAuthAndShow();
 };
@@ -86,358 +109,13 @@ async function login() {
             showMain();
             switchTab('task');
         } else {
-            alert("登录失败：" + (data.msg || "密码错误"));
+            showError("登录失败：" + (data.msg || "密码错误"));
         }
     } catch (e) {
-        alert("请求失败：" + e.message);
+showError("请求失败：" + e.message);
     }
-}
 
-async function runTask() {
-    const task = document.getElementById("taskInput").value.trim();
-    if (!task) return alert("请输入任务内容！");
-
-    const logEl = document.getElementById("log");
-    const reportEl = document.getElementById("reportArea");
-    const statusEl = document.getElementById("statusIndicator");
-
-    logEl.innerHTML = '';
-    reportEl.innerHTML = '';
-    statusEl.className = 'status-tag running';
-    statusEl.innerHTML = '<span class="status-dot"></span>执行中';
-
-    appendLog(logEl, 'info', '🚀 任务已提交，正在连接...');
-
-    try {
-        const res = await fetch("/api/agent/run-stream", {
-            method: "POST",
-            headers: { 
-                "Content-Type": "application/json",
-                token: token
-            },
-            body: JSON.stringify({ task, user_id: "default" })
-        });
-
-        const data = await res.json();
-        if (data.code !== 200) {
-            throw new Error(data.msg || '启动任务失败');
-        }
-
-        const { task_id, websocket_url } = data.data;
-        currentTaskId = task_id;
-
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}${websocket_url}`;
-
-        currentWs = new WebSocket(wsUrl);
-
-        currentWs.onopen = () => {
-            appendLog(logEl, 'info', '✅ WebSocket连接已建立');
-        };
-
-        currentWs.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-            handleWebSocketMessage(msg, logEl, reportEl, statusEl);
-        };
-
-        currentWs.onerror = (error) => {
-            appendLog(logEl, 'error', '❌ WebSocket连接错误');
-            statusEl.className = 'status-tag';
-            statusEl.innerHTML = '<span class="status-dot"></span>失败';
-        };
-
-        currentWs.onclose = () => {
-            if (statusEl.className.includes('running')) {
-                appendLog(logEl, 'info', '📡 连接已关闭');
-            }
-        };
-
-    } catch (e) {
-        logEl.innerHTML = `<span style="color:#cc0000">❌ 请求失败：${e.message}</span>`;
-        statusEl.innerHTML = '<span class="status-dot"></span>失败';
-    }
-}
-
-function handleWebSocketMessage(msg, logEl, reportEl, statusEl) {
-    const data = msg.data || {};
-    const content = data.content || '';
-    
-    switch (msg.type) {
-        case 'connected':
-            appendLog(logEl, 'info', '✅ ' + msg.message);
-            break;
-        
-        case 'thinking':
-            const agentName = getAgentDisplayName(msg.agent);
-            if (data.streaming) {
-                appendStreamingLog(logEl, msg.agent, content);
-            } else {
-                appendLog(logEl, 'thinking', `${agentName}: ${content}`);
-            }
-            break;
-        
-        case 'agent_start':
-            appendLog(logEl, 'agent-start', `🤖 ${data.role || msg.agent} 开始工作`);
-            appendLog(logEl, 'thinking', `${data.role || msg.agent}: ${data.content}`);
-            break;
-        
-        case 'agent_end':
-            appendLog(logEl, 'agent-end', `✅ ${data.role || msg.agent} 思考完成`);
-            break;
-        
-        case 'complete':
-            reportEl.innerText = data.result || data.content || "任务完成";
-            statusEl.className = 'status-tag done';
-            statusEl.innerHTML = '<span class="status-dot"></span>已完成';
-            appendLog(logEl, 'complete', '🎉 任务执行完成！');
-            
-            // 添加评分功能
-            const taskId = data.task_id || currentTaskId;
-            if (taskId) {
-                lastTaskId = taskId;
-                addRatingButtons(data.result || data.content || "");
-            }
-            
-            currentWs = null;
-            break;
-        
-        case 'rag_eval':
-            displayRagEval(data.eval_result);
-            appendLog(logEl, 'eval', `📊 RAG评估完成，总分: ${data.eval_result?.overall_score || 'N/A'}`);
-            break;
-        
-        case 'error':
-            appendLog(logEl, 'error', '❌ 错误: ' + (data.error || msg.error || content));
-            statusEl.className = 'status-tag';
-            statusEl.innerHTML = '<span class="status-dot"></span>失败';
-            currentWs = null;
-            break;
-        
-        default:
-            if (content) {
-                appendLog(logEl, 'log', content);
-            }
-    }
-    
-    logEl.scrollTop = logEl.scrollHeight;
-}
-
-function displayRagEval(evalResult) {
-    if (!evalResult || !evalResult.scores) return;
-    let evalDiv = document.getElementById('ragEvalResult');
-    if (!evalDiv) {
-        evalDiv = document.createElement('div');
-        evalDiv.id = 'ragEvalResult';
-        evalDiv.className = 'rag-eval-panel';
-        const resultPanel = document.querySelector('.result-panel');
-        if (resultPanel) {
-            resultPanel.insertBefore(evalDiv, document.getElementById('reportArea'));
-        }
-    }
-    const scores = evalResult.scores;
-    const overallScore = (evalResult.overall_score || 0) * 100;
-    const accuracy = ((scores.accuracy || 0) * 100).toFixed(0);
-    const completeness = ((scores.completeness || 0) * 100).toFixed(0);
-    const groundedness = ((scores.groundedness || 0) * 100).toFixed(0);
-    const helpfulness = ((scores.helpfulness || 0) * 100).toFixed(0);
-    
-    evalDiv.innerHTML = `
-        <div class="panel-title">
-            <i class="fa-solid fa-chart-line"></i>
-            RAG实时评估
-            <span class="eval-overall-score">${overallScore.toFixed(1)}%</span>
-        </div>
-        <div class="eval-scores">
-            <div class="eval-score-item">
-                <span class="eval-label">准确性</span>
-                <div class="eval-bar-track">
-                    <div class="eval-bar-fill" style="width: ${accuracy}%"></div>
-                </div>
-                <span class="eval-value">${accuracy}%</span>
-            </div>
-            <div class="eval-score-item">
-                <span class="eval-label">完整性</span>
-                <div class="eval-bar-track">
-                    <div class="eval-bar-fill" style="width: ${completeness}%"></div>
-                </div>
-                <span class="eval-value">${completeness}%</span>
-            </div>
-            <div class="eval-score-item">
-                <span class="eval-label">有据性</span>
-                <div class="eval-bar-track">
-                    <div class="eval-bar-fill" style="width: ${groundedness}%"></div>
-                </div>
-                <span class="eval-value">${groundedness}%</span>
-            </div>
-            <div class="eval-score-item">
-                <span class="eval-label">帮助性</span>
-                <div class="eval-bar-track">
-                    <div class="eval-bar-fill" style="width: ${helpfulness}%"></div>
-                </div>
-                <span class="eval-value">${helpfulness}%</span>
-            </div>
-        </div>
-    `;
-}
-
-function getAgentDisplayName(agent) {
-    const names = {
-        'researcher': '🔍 需求分析师',
-        'executor': '⚙️ 执行者',
-        'validator': '🧪 校验师',
-        'manager': '📋 汇总师',
-        'memory': '💾 记忆系统',
-        'system': '📌 系统'
-    };
-    return names[agent] || agent || '🤖';
-}
-
-const streamingContainers = {};
-
-function appendStreamingLog(container, agent, content) {
-    const agentId = agent || 'default';
-    
-    if (!streamingContainers[agentId]) {
-        const wrapper = document.createElement('div');
-        wrapper.className = `streaming-wrapper streaming-${agentId}`;
-        wrapper.innerHTML = `
-            <div class="streaming-header">
-                <span class="agent-badge ${agentId}">${getAgentDisplayName(agentId)}</span>
-                <span class="streaming-indicator">思考中...</span>
-            </div>
-            <div class="streaming-content"></div>
-        `;
-        container.appendChild(wrapper);
-        streamingContainers[agentId] = wrapper;
-    }
-    
-    const wrapper = streamingContainers[agentId];
-    const contentDiv = wrapper.querySelector('.streaming-content');
-    
-    contentDiv.textContent += content;
-    
-    wrapper.scrollIntoView({ behavior: 'smooth', block: 'end' });
-}
-
-function clearStreamingContainers() {
-    for (const key in streamingContainers) {
-        delete streamingContainers[key];
-    }
-}
-
-let lastTaskId = null;
-let lastResponse = "";
-
-function addRatingButtons(response) {
-    const reportArea = document.getElementById("reportArea");
-    if (!reportArea) return;
-    
-    // 移除已有的评分按钮
-    const existing = document.getElementById("ratingButtons");
-    if (existing) existing.remove();
-    
-    // 创建评分按钮容器
-    const ratingDiv = document.createElement("div");
-    ratingDiv.id = "ratingButtons";
-    ratingDiv.className = "rating-buttons";
-    ratingDiv.innerHTML = `
-        <span class="rating-label">回答是否满意：</span>
-        <button class="btn-rating btn-good" onclick="submitRating(1)">
-            <i class="fa-solid fa-thumbs-up"></i> 满意
-        </button>
-        <button class="btn-rating btn-bad" onclick="submitRating(0)">
-            <i class="fa-solid fa-thumbs-down"></i> 不满意
-        </button>
-    `;
-    
-    reportArea.appendChild(ratingDiv);
-    lastResponse = response;
-}
-
-async function submitRating(rating) {
-    if (!currentTaskId && !lastTaskId) {
-        console.error("没有任务ID");
-        return;
-    }
-    
-    const taskId = currentTaskId || lastTaskId || "default";
-    
-    try {
-        const res = await fetch("/api/eval/feedback/rating", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                token: token
-            },
-            body: JSON.stringify({
-                session_id: taskId,
-                rating: rating
-            })
-        });
-        
-        const data = await res.json();
-        if (data.code === 200) {
-            // 隐藏评分按钮
-            const ratingDiv = document.getElementById("ratingButtons");
-            if (ratingDiv) {
-                ratingDiv.innerHTML = `<span class="rating-thanks">${rating === 1 ? '👍 感谢您的认可！' : '🙏 感谢您的反馈！'}</span>`;
-            }
-        }
-    } catch (e) {
-        console.error("评分失败:", e);
-    }
-}
-
-function appendLog(container, type, content) {
-    const div = document.createElement('div');
-    div.className = `log-item log-${type}`;
-
-    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    div.innerHTML = `<span class="log-time">${time}</span> ${content}`;
-
-    container.appendChild(div);
-}
-
-function clearAll() {
-    if (currentWs) {
-        currentWs.close();
-        currentWs = null;
-    }
-    currentTaskId = null;
-    clearStreamingContainers();
-    document.getElementById("taskInput").value = "";
-    document.getElementById("log").innerHTML = "";
-    document.getElementById("reportArea").innerHTML = "";
-    document.getElementById("statusIndicator").innerHTML = '<span class="status-dot"></span>等待中';
-}
-
-async function loadMemoryStats() {
-    try {
-        const res = await fetch("/api/memory/stats/default", {
-            headers: { token: token }
-        });
-        if (res.status === 401) {
-            localStorage.removeItem("token");
-            token = null;
-            showLogin();
-            return;
-        }
-        const data = await res.json();
-        if (data.data) {
-            document.getElementById("statUserTotal").textContent = data.data.user_total || 0;
-            document.getElementById("statTask").textContent = data.data.by_type?.task || 0;
-            document.getElementById("statKnowledge").textContent = data.data.knowledge_total || 0;
-        }
-    } catch (e) {
-        console.error(e);
-    }
-}
-
-async function addMemory() {
-    const content = document.getElementById("memoryContent").value.trim();
-    const memoryType = document.getElementById("memoryType").value;
-
-    if (!content) return alert("请输入记忆内容！");
+    if (!content) return showWarning("请输入记忆内容！");
 
     try {
         const res = await fetch("/api/memory/add", {
@@ -455,21 +133,18 @@ async function addMemory() {
 
         const data = await res.json();
         if (data.code === 200) {
-            alert("记忆保存成功！");
+            showSuccess("记忆保存成功！");
             document.getElementById("memoryContent").value = "";
             loadMemoryStats();
             loadMemories();
         } else {
-            alert("保存失败");
+            showError("保存失败");
         }
-    } catch (e) {
-        alert("请求失败：" + e.message);
+} catch (e) {
+        showError("请求失败：" + e.message);
     }
-}
 
-async function searchMemories() {
-    const query = document.getElementById("searchQuery").value.trim();
-    if (!query) return alert("请输入搜索内容！");
+    if (!query) return showWarning("请输入搜索内容！");
 
     const resultsEl = document.getElementById("searchResults");
     resultsEl.innerHTML = '<div class="memory-item"><p>搜索中...</p></div>';
@@ -601,7 +276,19 @@ async function loadMemories() {
 }
 
 async function deleteMemory(memoryId) {
-    if (!confirm("确定删除这条记忆？")) return;
+    // 使用确认弹窗
+    const confirmed = await new Promise(resolve => {
+        showModal({
+            title: '确认删除',
+            message: '确定删除这条记忆？',
+            type: 'warning',
+            confirmText: '删除',
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false)
+        });
+    });
+    
+    if (!confirmed) return;
 
     try {
         const res = await fetch("/api/memory/delete", {
@@ -618,7 +305,7 @@ async function deleteMemory(memoryId) {
             loadMemories();
         }
     } catch (e) {
-        alert("删除失败：" + e.message);
+        showError("删除失败：" + e.message);
     }
 }
 
@@ -754,7 +441,8 @@ async function uploadKbFile() {
                 fill.style.width = '100%';
                 fill.style.background = '#2ba640';
                 text.textContent = '完成 (100%)';
-                statusEl.innerHTML = `<p style="color:#2ba640">✅ 上传成功！已提取 ${msg.chunks} 个知识片段</p>`;
+                const docInfo = msg.doc_type ? ` (${msg.doc_type})` : '';
+                statusEl.innerHTML = `<p style="color:#2ba640">✅ 上传成功！已提取 ${msg.chunks} 个知识片段${docInfo}</p>`;
                 fileInput.value = "";
                 setTimeout(() => {
                     progressEl.style.display = 'none';
@@ -976,7 +664,7 @@ function refreshEval() {
 
 async function searchAllMemories() {
     const query = document.getElementById("searchQuery").value.trim();
-    if (!query) return alert("请输入搜索内容！");
+    if (!query) return showWarning("请输入搜索内容！");
 
     const resultsEl = document.getElementById("searchResults");
     resultsEl.innerHTML = '<div class="memory-item"><p>全局搜索中...</p></div>';
@@ -1045,9 +733,21 @@ function toggleSelectAllMemories() {
 
 async function batchDeleteMemories() {
     const checkboxes = document.querySelectorAll(".memory-checkbox:checked");
-    if (checkboxes.length === 0) return alert("请选择要删除的记忆！");
+    if (checkboxes.length === 0) return showWarning("请选择要删除的记忆！");
 
-    if (!confirm(`确定删除选中的 ${checkboxes.length} 条记忆？`)) return;
+    // 自定义确认弹窗
+    const count = checkboxes.length;
+    const confirmed = await new Promise(resolve => {
+        showModal({
+            title: '批量删除',
+            message: `确定删除选中的 ${count} 条记忆？`,
+            type: 'warning',
+            confirmText: '删除',
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false)
+        });
+    });
+    if (!confirmed) return;
 
     const ids = Array.from(checkboxes).map(cb => cb.value);
 
@@ -1063,20 +763,31 @@ async function batchDeleteMemories() {
 
         const data = await res.json();
         if (data.code === 200) {
-            alert(`成功删除 ${data.deleted_count} 条记忆`);
+            showSuccess(`成功删除 ${data.deleted_count} 条记忆`);
             document.getElementById("selectAllMemories").checked = false;
             loadMemoryStats();
             loadMemories();
         } else {
-            alert("删除失败");
+            showError("删除失败");
         }
     } catch (e) {
-        alert("删除失败：" + e.message);
+        showError("删除失败：" + e.message);
     }
 }
 
 async function clearAllUserMemories() {
-    if (!confirm("确定清除当前用户的所有记忆？此操作不可恢复！")) return;
+    // 危险操作确认
+    const confirmed = await new Promise(resolve => {
+        showModal({
+            title: '清除所有记忆',
+            message: '确定清除当前用户的所有记忆？此操作不可恢复！',
+            type: 'danger',
+            confirmText: '清除',
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false)
+        });
+    });
+    if (!confirmed) return;
 
     try {
         const res = await fetch("/api/memory/clear/default", {
@@ -1086,13 +797,120 @@ async function clearAllUserMemories() {
 
         const data = await res.json();
         if (data.code === 200) {
-            alert(`成功清除 ${data.deleted_count} 条记忆`);
+            showSuccess(`成功清除 ${data.deleted_count} 条记忆`);
             loadMemoryStats();
             loadMemories();
         } else {
-            alert("清除失败");
+            showError("清除失败");
         }
     } catch (e) {
-        alert("清除失败：" + e.message);
+        showToast("清除失败：" + e.message, "error");
     }
 }
+
+// ==================== 自定义弹窗和提示 ====================
+let modalCallback = null;
+
+function showModal(options) {
+    const { title, message, type = 'info', confirmText = '确定', cancelText = '取消', onConfirm, showCancel = true } = options;
+    
+    const overlay = document.getElementById('modalOverlay');
+    const titleEl = document.getElementById('modalTitle');
+    const messageEl = document.getElementById('modalMessage');
+    const confirmBtn = document.getElementById('modalConfirmBtn');
+    
+    // 设置图标和颜色
+    const icons = {
+        success: '<i class="fa-solid fa-circle-check"></i>',
+        error: '<i class="fa-solid fa-circle-xmark"></i>',
+        warning: '<i class="fa-solid fa-circle-exclamation"></i>',
+        info: '<i class="fa-solid fa-circle-info"></i>'
+    };
+    
+    titleEl.innerHTML = `${icons[type] || icons.info} <span>${title}</span>`;
+    titleEl.className = `modal-title ${type}`;
+    messageEl.textContent = message;
+    
+    confirmBtn.textContent = confirmText;
+    confirmBtn.className = type === 'danger' ? 'btn btn-danger' : 'btn btn-confirm';
+    
+    document.querySelector('.btn-cancel').textContent = cancelText;
+    document.querySelector('.btn-cancel').style.display = showCancel ? 'block' : 'none';
+    
+    modalCallback = onConfirm;
+    overlay.classList.add('active');
+}
+
+function closeModal() {
+    document.getElementById('modalOverlay').classList.remove('active');
+    modalCallback = null;
+}
+
+function confirmModal() {
+    if (modalCallback) {
+        modalCallback();
+    }
+    closeModal();
+}
+
+function closeModalOverlay(event) {
+    if (event && event.target !== event.currentTarget) return;
+    closeModal();
+}
+
+// 显示确认弹窗
+function showConfirm(message, onConfirm) {
+    showModal({
+        title: '确认操作',
+        message: message,
+        type: 'warning',
+        onConfirm: onConfirm
+    });
+}
+
+// 显示危险操作确认
+function showDangerConfirm(message, onConfirm) {
+    showModal({
+        title: '危险操作',
+        message: message,
+        type: 'danger',
+        confirmText: '删除',
+        onConfirm: onConfirm
+    });
+}
+
+// Toast 提示
+function showToast(message, type = 'info', duration = 3000) {
+    const container = document.getElementById('toastContainer');
+    
+    const icons = {
+        success: '<i class="fa-solid fa-circle-check"></i>',
+        error: '<i class="fa-solid fa-circle-xmark"></i>',
+        warning: '<i class="fa-solid fa-circle-exclamation"></i>',
+        info: '<i class="fa-solid fa-circle-info"></i>'
+    };
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+        ${icons[type] || icons.info}
+        <span class="toast-message">${message}</span>
+    `;
+    
+    container.appendChild(toast);
+    
+    // 显示动画
+    setTimeout(() => toast.classList.add('show'), 10);
+    
+    // 自动隐藏
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}
+
+// 便捷方法
+function showSuccess(message) { showToast(message, 'success'); }
+function showError(message) { showToast(message, 'error'); }
+function showWarning(message) { showToast(message, 'warning'); }
+function showInfo(message) { showToast(message, 'info'); }

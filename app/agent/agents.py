@@ -29,6 +29,7 @@ _ensure_env()
 from app.llm.model_factory import llm
 from app.core.memory import memory
 from app.core.rag_eval import rag_realtime_evaluator
+from app.utils.logger import rag_logger as logger
 
 
 class SearchKnowledgeBaseInput(BaseModel):
@@ -64,7 +65,7 @@ def _create_rag_tools():
                     latency_ms=latency_ms
                 )
             except Exception as eval_error:
-                print(f"[RAG评估] 检索评估失败: {eval_error}")
+                logger.warning(f"检索评估失败: {eval_error}")
             
             return result_text
         except Exception as e:
