@@ -173,7 +173,7 @@ class DocumentParserFactory:
             ".txt": "text"
         }
         doc_type = type_map.get(ext, "text")
-        logger.debug(f"[DocumentParser] 文档类型: {doc_type}")
+        logger.info(f"[DocumentParser] 文档类型: {doc_type}")
         return doc_type
 
 
@@ -201,7 +201,7 @@ class ProductionLevelSplitter:
         """分块主入口"""
         # 1. 提取标题层级结构
         heading_tree = self._extract_heading_tree(text)
-        logger.debug(f"[Splitter] 发现 {len(heading_tree)} 个标题")
+        logger.info(f"[Splitter] 发现 {len(heading_tree)} 个标题")
         
         # 2. 递归分块
         chunks = self._recursive_split(text, heading_tree)
@@ -455,7 +455,7 @@ def split_document(file_path: str, source_file: str = "") -> List[Dict[str, Any]
             "content": chunk.content,
             "metadata": chunk.metadata.to_dict()
         })
-        logger.debug(f"[DocumentSplitter] Chunk {chunk.metadata.chunk_index}: "
+        logger.info(f"[DocumentSplitter] Chunk {chunk.metadata.chunk_index}: "
                   f"level={chunk.metadata.heading_level}, "
                   f"title={chunk.metadata.title[:20]}")
     

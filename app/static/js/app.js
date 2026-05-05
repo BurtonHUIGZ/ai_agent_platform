@@ -39,6 +39,40 @@ function showMain() {
     document.getElementById("mainPage").style.display = "block";
 }
 
+// ========== 按钮附近确认气泡 ==========
+let popupTargetId = null;
+let popupCallback = null;
+
+function showBtnPopup(event, message, onConfirm, onDelete) {
+    event.stopPropagation();
+    popupTargetId = event.currentTarget.id || 'popup-' + Date.now();
+    popupCallback = { onConfirm, onDelete };
+    
+    const popup = document.getElementById("confirmPopup");
+    const btn = event.currentTarget;
+    const rect = btn.getBoundingClientRect();
+    
+    popup.style.left = rect.left + 'px';
+    popup.style.top = (rect.bottom + 5) + 'px';
+    popup.classList.add("show");
+}
+
+// 点击其他地方关闭
+document.addEventListener("click", hideBtnPopup);
+
+function hideBtnPopup() {
+    document.getElementById("confirmPopup").classList.remove("show");
+}
+
+function onConfirmPopupClick(action) {
+    hideBtnPopup();
+    if (action === "delete" && popupCallback.onDelete) {
+        popupCallback.onDelete();
+    } else if (popupCallback.onConfirm) {
+        popupCallback.onConfirm();
+    }
+}
+
 function switchTab(tabName) {
     const savedToken = localStorage.getItem("token");
     if (!savedToken) {
@@ -601,8 +635,6 @@ async function loadMemories() {
 }
 
 async function deleteMemory(memoryId) {
-    if (!confirm("确定删除这条记忆？")) return;
-
     try {
         const res = await fetch("/api/memory/delete", {
             method: "POST",
@@ -614,11 +646,14 @@ async function deleteMemory(memoryId) {
         });
 
         if (res.ok) {
-            loadMemoryStats();
-            loadMemories();
+            showSuccess("已删除");
+            setTimeout(() => {
+                loadMemoryStats();
+                loadMemories();
+            }, 500);
         }
     } catch (e) {
-        alert("删除失败：" + e.message);
+        showError("删除失败");
     }
 }
 
@@ -1096,3 +1131,43 @@ async function clearAllUserMemories() {
         alert("清除失败：" + e.message);
     }
 }
+
+// ========== Toast 提示 ==========
+let lastClickPos = { x: 0, y: 0 };
+
+document.addEventListener('click', (e) => {
+    lastClickPos.x = e.clientX;
+    lastClickPos.y = e.clientY;
+});
+
+function showToast(message, type = 'info', duration = 3000) {
+    const container = document.getElementById("toastContainer") || createToastContainer();
+    
+    const toast = document.createElement("div");
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `<i class="fa-solid fa-${type === 'success' ? 'check' : type === 'error' ? 'xmark' : type === 'warning' ? 'triangle' : 'circle-info'}"></i><span>${message}</span>`;
+    
+    // 在最后点击位置显示
+    toast.style.left = lastClickPos.x + 'px';
+    toast.style.top = (lastClickPos.y + 10) + 'px';
+    
+    container.appendChild(toast);
+    
+    setTimeout(() => toast.classList.add("show"), 10);
+    setTimeout(() => {
+        toast.classList.remove("show");
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}
+
+function createToastContainer() {
+    const container = document.createElement("div");
+    container.id = "toastContainer";
+    document.body.appendChild(container);
+    return container;
+}
+
+function showSuccess(message) { showToast(message, 'success'); }
+function showError(message) { showToast(message, 'error'); }
+function showWarning(message) { showToast(message, 'warning'); }
+function showInfo(message) { showToast(message, 'info'); }

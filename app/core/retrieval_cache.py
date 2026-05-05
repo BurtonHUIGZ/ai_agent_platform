@@ -32,7 +32,7 @@ class RetrievalCache:
             return None
         
         self._cache.move_to_end(key)
-        logger.debug(f"缓存命中: {query[:30]}...")
+        logger.info(f"缓存命中: {query[:30]}...")
         return self._cache[key]
 
     def set(self, query: str, results: List[Dict[str, Any]], user_id: str = "default"):
@@ -49,7 +49,7 @@ class RetrievalCache:
             self._cache[key] = results
             self._timestamps[key] = time.time()
         
-        logger.debug(f"缓存写入: {query[:30]}...")
+        logger.info(f"缓存写入: {query[:30]}...")
 
     def _delete(self, key: str):
         """删除缓存"""

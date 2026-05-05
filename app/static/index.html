@@ -482,6 +482,25 @@
     </main>
 </div>
 
+<!-- 按钮附近确认气泡 -->
+<div id="confirmPopup" class="btn-confirm-popup">
+    <button class="btn-confirm-popup-item" onclick="onConfirmPopupClick()">
+        <i class="fa-solid fa-check"></i> 确认
+    </button>
+    <button class="btn-confirm-popup-item danger" onclick="onConfirmPopupClick('delete')">
+        <i class="fa-solid fa-trash"></i> 删除
+    </button>
+</div>
+
+<!-- 底部确认条 -->
+<div id="confirmBar" class="toast-confirm">
+    <div class="toast-confirm-message" id="confirmMessage"></div>
+    <div class="toast-confirm-buttons">
+        <button class="btn btn-cancel" onclick="hideConfirm()">取消</button>
+        <button class="btn btn-danger" onclick="doConfirm()">确定</button>
+    </div>
+</div>
+
 <!-- 自定义弹窗组件 -->
 <div id="modalOverlay" class="modal-overlay" onclick="closeModalOverlay(event)">
     <div class="modal-box">

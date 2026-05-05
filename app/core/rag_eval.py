@@ -70,7 +70,7 @@ class RAGRealTimeEvaluator:
 {{"relevance": 0.8, "completeness": 0.7, "diversity": 0.9}}"""
 
             response = eval_llm.call(prompt)
-            logger.debug(f"LLM原始返回(retrieval): {response}")
+            logger.info(f"LLM原始返回(retrieval): {response}")
 
             import json
             import re
@@ -158,7 +158,7 @@ class RAGRealTimeEvaluator:
 {{"accuracy": 0.8, "completeness": 0.7, "groundedness": 0.9, "helpfulness": 0.8}}"""
 
             response_text = eval_llm.call(prompt)
-            logger.debug(f"LLM原始返回(response): {response_text}")
+            logger.info(f"LLM原始返回(response): {response_text}")
 
             import json
             import re

@@ -79,7 +79,7 @@ class CrossEncoderReranker:
             
             reranked.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
             
-            logger.debug(f"重排序完成: {len(documents)} 条 -> {top_k} 条")
+            logger.info(f"重排序完成: {len(documents)} 条 -> {top_k} 条")
             return reranked[:top_k]
             
         except Exception as e:

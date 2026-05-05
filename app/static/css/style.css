@@ -1294,6 +1294,51 @@ body {
 }
 
 /* ==================== 自定义弹窗组件 ==================== */
+/* 按钮附近确认气泡 */
+.btn-confirm-popup {
+    position: fixed;
+    background: var(--bg-white);
+    border-radius: 8px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+    padding: 8px 0;
+    z-index: 10003;
+    min-width: 140px;
+    transform: scale(0.9);
+    opacity: 0;
+    transition: all 0.2s ease;
+    pointer-events: none;
+}
+
+.btn-confirm-popup.show {
+    transform: scale(1);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.btn-confirm-popup-item {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-color);
+}
+
+.btn-confirm-popup-item:hover {
+    background: var(--bg-gray);
+}
+
+.btn-confirm-popup-item.danger {
+    color: var(--red);
+}
+
+.btn-confirm-popup-item.danger:hover {
+    background: #fee;
+}
+
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -1406,38 +1451,58 @@ body {
     background: #d32f2f;
 }
 
-/* Toast 提示消息 - 底部居中 */
-.toast-container {
+/* Toast 提示消息 - 按钮附近 */
+#toastContainer {
     position: fixed;
-    bottom: 30px;
-    left: 50%;
-    transform: translateX(-50%);
+    top: 0;
+    left: 0;
     z-index: 10001;
+    pointer-events: none;
+}
+
+.toast {
+    position: fixed;
+    background: #323232;
+    color: white;
+    border-radius: 8px;
+    padding: 10px 16px;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    transform: translateY(-10px);
+    opacity: 0;
+    transition: all 0.3s ease;
+    font-size: 13px;
+    z-index: 10004;
+}
+
+.toast.show {
+    transform: translateY(0);
+    opacity: 1;
 }
 
 .toast {
     background: #323232;
     color: white;
-    border-radius: 30px;
-    padding: 14px 28px;
-    min-width: 200px;
+    border-radius: 8px;
+    padding: 14px 24px;
+    min-width: 280px;
     max-width: 90%;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 12px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-    transform: translateY(100px) scale(0.9);
+    transform: translateY(-100px);
     opacity: 0;
     transition: all 0.3s ease;
+    font-size: 14px;
+    line-height: 1.5;
 }
 
 .toast.show {
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
     opacity: 1;
 }
 

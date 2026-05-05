@@ -266,7 +266,7 @@ class LongTermMemory:
         try:
             summaries = [doc[:500] if len(doc) > 500 else doc for doc in documents]
             embeddings = self._get_embeddings().embed_documents(summaries)
-            logger.debug(f"批量获取embedding成功, {len(embeddings)} 条")
+            logger.info(f"批量获取embedding成功, {len(embeddings)} 条")
         except Exception as e:
             logger.error(f"批量获取embedding失败: {e}")
             # 使用单个 embedding
@@ -526,14 +526,14 @@ class LongTermMemory:
         if use_cache:
             cached_results = retrieval_cache.get(query, user_id)
             if cached_results:
-                logger.debug(f"缓存命中，直接返回")
+                logger.info(f"缓存命中，直接返回")
                 return cached_results[:top_k]
         
         search_query = query
         if enable_query_understand:
             query_info = query_understander.understand(query)
             search_query = query_info.get("rewritten_for_search", query)
-            logger.debug(f"查询改写: {query} -> {search_query}")
+            logger.info(f"查询改写: {query} -> {search_query}")
         
         # 并行检索：向量检索 + BM25
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
