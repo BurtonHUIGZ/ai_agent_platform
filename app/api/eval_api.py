@@ -6,6 +6,7 @@ from app.core.evaluator import evaluator, create_sample_dataset
 from app.core.eval_types import EvalCase, EvalResult, FeedbackRecord
 from app.core.eval_db import eval_db
 from app.core.user_system import check
+from app.core.rag_offline_eval import rag_offline_evaluator
 
 
 router = APIRouter(prefix="/api/eval")
@@ -184,3 +185,22 @@ def get_feedback_stats(token: str = Header(None)):
             "trends": trends
         }
     }
+
+
+class OfflineEvalInput(BaseModel):
+    k: int = 5
+    load_samples: bool = False
+
+
+@router.post("/offline/run")
+def run_offline_eval(input: OfflineEvalInput):
+    if input.load_samples:
+        rag_offline_evaluator.load_sample_dataset()
+    
+    result = rag_offline_evaluator.run_evaluation(k=input.k)
+    return result
+
+
+@router.get("/offline/results")
+def get_offline_results():
+    return {"results": rag_offline_evaluator.get_results()}

@@ -3,7 +3,9 @@ from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun
 from app.core.memory import memory
 from app.core.rag_eval import rag_realtime_evaluator
+from app.core.metrics import metrics
 from app.utils.logger import rag_logger as logger
+from app.core.query_understander import query_understander
 import time
 
 
@@ -22,6 +24,9 @@ def search_knowledge_base(query: str, top_k: int = 5, session_id: str = "default
     """
     try:
         start = time.time()
+        query_info = query_understander.understand(query)
+        query_type = query_info.get("intent", "unknown")
+        
         results = memory.hybrid_retrieve(
             user_id="default",
             query=query,
@@ -30,6 +35,16 @@ def search_knowledge_base(query: str, top_k: int = 5, session_id: str = "default
             kb_top_k=top_k
         )
         latency_ms = (time.time() - start) * 1000
+        latency_seconds = latency_ms / 1000
+        
+        status = "success" if results else "empty"
+        metrics.record_rag_retrieval(
+            user_id="default",
+            status=status,
+            query_type=query_type,
+            latency_seconds=latency_seconds,
+            doc_count=len(results)
+        )
         
         if not results:
             return "知识库中未找到相关信息"

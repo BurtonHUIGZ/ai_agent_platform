@@ -10,6 +10,9 @@ from collections import OrderedDict
 
 from app.settings import CHROMA_PATH
 from app.utils.logger import memory_logger as logger
+from app.core.query_understander import query_understander
+from app.core.reranker import cross_encoder_reranker, lightweight_reranker
+from app.core.retrieval_cache import retrieval_cache
 
 MAX_EMBEDDING_TOKENS = 2000
 
@@ -162,7 +165,37 @@ class LongTermMemory:
         """添加单条记忆"""
         # 批量添加的简化版本
         return self.add_memories(user_id, [(content, metadata or {})], memory_type)[0]
-
+    
+    def _chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+        """分片文本"""
+        if len(text) <= chunk_size:
+            return [text]
+        
+        chunks = []
+        start = 0
+        text_len = len(text)
+        
+        while start < text_len:
+            end = start + chunk_size
+            chunk = text[start:end]
+            
+            if end < text_len and overlap > 0:
+                last_newline = chunk.rfind('\n')
+                last_space = chunk.rfind(' ')
+                if last_newline > chunk_size - 100:
+                    chunk = chunk[:last_newline]
+                elif last_space > chunk_size - 100:
+                    chunk = chunk[:last_space]
+            
+            if chunk.strip():
+                chunks.append(chunk)
+            
+            if end >= text_len:
+                break
+            start = end - overlap if overlap else end
+        
+        return chunks if chunks else [text[:chunk_size]]
+    
     def add_memories(
             self,
             user_id: str,
@@ -170,8 +203,8 @@ class LongTermMemory:
             memory_type: str = "general"
     ) -> List[str]:
         """
-        批量添加记忆
-        
+        批量添加记忆（使用智能分块）
+
         Args:
             user_id: 用户ID
             contents: List[(content, metadata), ...]
@@ -183,18 +216,38 @@ class LongTermMemory:
         if not contents:
             return []
         
+
+        from app.core.document_splitter import ProductionLevelSplitter
+        splitter = ProductionLevelSplitter(chunk_size=500)
+        
+        processed_contents = []
+        for content, metadata in contents:
+            try:
+                doc_chunks = splitter.split(content, "")
+                logger.info(f"分块: 原始长度 {len(content)} -> {len(doc_chunks)} 块")
+                for chunk in doc_chunks:
+                    processed_contents.append((chunk.content, metadata))
+            except Exception as e:
+                logger.warning(f"分块失败: {e}, 使用简单分块")
+                chunks = self._chunk_text(content, 500)
+                for chunk in chunks:
+                    processed_contents.append((chunk, metadata))
+        
+        if not processed_contents:
+            return []
+        
         ids = []
         embeddings = []
         documents = []
         metadatas = []
         sqlite_data = []
-        
-        for content, metadata in contents:
+
+        for content, metadata in processed_contents:
             memory_id = str(uuid.uuid4())
             ids.append(memory_id)
             
-            summary = content[:500] if len(content) > 500 else content
-            
+            summary = content[:200] if len(content) > 200 else content
+
             metadata = metadata or {}
             # 过滤掉 None 值，ChromaDB 不接受 None
             metadata = {k: v for k, v in metadata.items() if v is not None}
@@ -457,26 +510,46 @@ class LongTermMemory:
             query: str,
             top_k: int = 5,
             user_top_k: int = 5,
-            kb_top_k: int = 5
+            kb_top_k: int = 5,
+            use_cache: bool = True,
+            use_rerank: bool = True,
+            enable_query_understand: bool = True
     ) -> List[Dict[str, Any]]:
-        """混合检索 + 重排序"""
+        """混合检索 + 查询理解 + 缓存 + 重排序"""
         import concurrent.futures
+        
+        top_k = max(1, top_k)
+        user_top_k = max(1, user_top_k)
+        kb_top_k = max(1, kb_top_k)
+        
+        cached_results = None
+        if use_cache:
+            cached_results = retrieval_cache.get(query, user_id)
+            if cached_results:
+                logger.debug(f"缓存命中，直接返回")
+                return cached_results[:top_k]
+        
+        search_query = query
+        if enable_query_understand:
+            query_info = query_understander.understand(query)
+            search_query = query_info.get("rewritten_for_search", query)
+            logger.debug(f"查询改写: {query} -> {search_query}")
         
         # 并行检索：向量检索 + BM25
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             user_vec_future = executor.submit(
                 self._query_single_collection, 
-                self.user_collection, user_id, query, user_top_k
+                self.user_collection, user_id, search_query, user_top_k
             )
             kb_vec_future = executor.submit(
                 self._query_single_collection,
-                self.knowledge_collection, user_id, query, kb_top_k
+                self.knowledge_collection, user_id, search_query, kb_top_k
             )
             user_bm25_future = executor.submit(
-                self._get_bm25_results, "user_memories", query, user_top_k
+                self._get_bm25_results, "user_memories", search_query, user_top_k
             )
             kb_bm25_future = executor.submit(
-                self._get_bm25_results, "knowledge_base", query, kb_top_k
+                self._get_bm25_results, "knowledge_base", search_query, kb_top_k
             )
             
             user_vec = user_vec_future.result()
@@ -496,7 +569,20 @@ class LongTermMemory:
         # 按 RRF 分数排序
         fused_memories.sort(key=lambda x: x.get("rrf_score", 0), reverse=True)
         
-        return fused_memories[:top_k]
+        # 重排序
+        if use_rerank and fused_memories:
+            reranked = cross_encoder_reranker.rerank(search_query, fused_memories, top_k=top_k)
+            if reranked:
+                fused_memories = reranked
+            else:
+                fused_memories = lightweight_reranker.rerank(search_query, fused_memories, top_k=top_k)
+        
+        result = fused_memories[:top_k]
+        
+        if use_cache:
+            retrieval_cache.set(query, fused_memories, user_id)
+        
+        return result
 
     def _calc_time_weight(self, created_at: str) -> float:
         try:
@@ -699,6 +785,7 @@ class LongTermMemory:
             page: int = 1,
             page_size: int = 20
     ) -> Dict[str, Any]:
+        page_size = max(1, page_size)
         where_filter = {}
         if memory_type:
             where_filter["memory_type"] = {"$eq": memory_type}
@@ -707,6 +794,14 @@ class LongTermMemory:
 
         query_embedding = self._get_embedding(query)
         total_count = self.collection.count()
+        
+        if total_count == 0:
+            return {"list": [], "total": 0, "page": page, "page_size": page_size}
+        
+        n_results = min(page_size * page, total_count)
+        if n_results < 1:
+            n_results = 1
+            
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=min(page_size * page, total_count),

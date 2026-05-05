@@ -16,6 +16,15 @@ class RAGRealTimeEvaluator:
         self.eval_llm = None
         self._enabled = True
     
+    def _validate(self, query: str, retrieved_docs: List[Dict[str, Any]]) -> bool:
+        """验证输入是否有效"""
+        if not query or not query.strip():
+            return False
+        if not retrieved_docs:
+            return False
+        has_content = any(doc.get("content", "").strip() for doc in retrieved_docs)
+        return bool(has_content)
+    
     def _get_eval_llm(self):
         """延迟加载评估LLM"""
         if self.eval_llm is None:
@@ -33,17 +42,23 @@ class RAGRealTimeEvaluator:
         if not self._enabled:
             return {"enabled": False}
         
+        if not self._validate(query, retrieved_docs):
+            return {"enabled": True, "retrieved_count": 0, "scores": {}, "overall_score": 0}
+        
         try:
             eval_llm = self._get_eval_llm()
             
-            doc_texts = [doc.get("content", "") for doc in retrieved_docs[:5]]
+            doc_texts = [doc.get("content", "")[:300] for doc in retrieved_docs[:5] if doc.get("content")]
             doc_count = len(retrieved_docs)
+            
+            if not doc_texts:
+                return {"enabled": True, "retrieved_count": 0, "scores": {}, "overall_score": 0}
             
             prompt = f"""请评估以下RAG检索结果的质量，以JSON格式返回评分。
 
 用户查询：{query}
 
-检索到的文档（前5条）：
+检索到的文档（前{len(doc_texts)}条）：
 {chr(10).join([f"{i+1}. {text}" for i, text in enumerate(doc_texts)])}
 
 请评估以下指标（0-1分）：
@@ -112,10 +127,16 @@ class RAGRealTimeEvaluator:
         if not self._enabled:
             return {"enabled": False}
         
+        if not self._validate(query, retrieved_docs):
+            return {"enabled": True, "scores": {}, "overall_score": 0}
+        
         try:
             eval_llm = self._get_eval_llm()
             
-            doc_texts = [doc.get("content", "") for doc in retrieved_docs[:3]]
+            doc_texts = [doc.get("content", "")[:300] for doc in retrieved_docs[:3] if doc.get("content")]
+            
+            if not doc_texts:
+                return {"enabled": True, "scores": {}, "overall_score": 0}
             
             prompt = f"""请评估以下RAG系统生成的回答质量，以JSON格式返回评分。
 
