@@ -5,6 +5,7 @@ from datetime import datetime
 from app.llm.model_factory import ModelFactory
 from app.core.eval_db import eval_db
 from app.core.eval_types import FeedbackRecord
+from app.core.metrics import metrics
 from app.settings import get_model_config, settings
 from app.utils.logger import rag_logger as logger
 
@@ -39,20 +40,24 @@ class RAGRealTimeEvaluator:
         latency_ms: float
     ) -> Dict[str, Any]:
         """评估检索结果的质量"""
+        start_time = time.time()
+        
         if not self._enabled:
             return {"enabled": False}
         
         if not self._validate(query, retrieved_docs):
+            metrics.record_rag_eval("retrieval", "invalid", 0)
+            return {"enabled": True, "retrieved_count": 0, "scores": {}, "overall_score": 0}
+        
+        doc_texts = [doc.get("content", "")[:300] for doc in retrieved_docs[:5] if doc.get("content")]
+        doc_count = len(retrieved_docs)
+        
+        if not doc_texts:
+            metrics.record_rag_eval("retrieval", "empty", 0)
             return {"enabled": True, "retrieved_count": 0, "scores": {}, "overall_score": 0}
         
         try:
             eval_llm = self._get_eval_llm()
-            
-            doc_texts = [doc.get("content", "")[:300] for doc in retrieved_docs[:5] if doc.get("content")]
-            doc_count = len(retrieved_docs)
-            
-            if not doc_texts:
-                return {"enabled": True, "retrieved_count": 0, "scores": {}, "overall_score": 0}
             
             prompt = f"""请评估以下RAG检索结果的质量，以JSON格式返回评分。
 
@@ -104,6 +109,9 @@ class RAGRealTimeEvaluator:
                 latency_ms=latency_ms
             ))
             
+            latency_seconds = time.time() - start_time
+            metrics.record_rag_eval("retrieval", "success", latency_seconds, scores)
+            
             return {
                 "enabled": True,
                 "retrieved_count": doc_count,
@@ -114,6 +122,9 @@ class RAGRealTimeEvaluator:
             
         except Exception as e:
             logger.error(f"评估失败: {e}")
+            latency_seconds = time.time() - start_time
+            metrics.record_rag_eval("retrieval", "error", latency_seconds)
+            metrics.record_eval_llm_error()
             return {"enabled": True, "error": str(e)}
     
     def evaluate_response(
@@ -124,19 +135,23 @@ class RAGRealTimeEvaluator:
         session_id: str
     ) -> Dict[str, Any]:
         """评估生成的回答质量"""
+        start_time = time.time()
+        
         if not self._enabled:
             return {"enabled": False}
         
         if not self._validate(query, retrieved_docs):
+            metrics.record_rag_eval("response", "invalid", 0)
+            return {"enabled": True, "scores": {}, "overall_score": 0}
+        
+        doc_texts = [doc.get("content", "")[:300] for doc in retrieved_docs[:3] if doc.get("content")]
+        
+        if not doc_texts:
+            metrics.record_rag_eval("response", "empty", 0)
             return {"enabled": True, "scores": {}, "overall_score": 0}
         
         try:
             eval_llm = self._get_eval_llm()
-            
-            doc_texts = [doc.get("content", "")[:300] for doc in retrieved_docs[:3] if doc.get("content")]
-            
-            if not doc_texts:
-                return {"enabled": True, "scores": {}, "overall_score": 0}
             
             prompt = f"""请评估以下RAG系统生成的回答质量，以JSON格式返回评分。
 
@@ -194,6 +209,9 @@ class RAGRealTimeEvaluator:
                 1 if overall_score >= 0.6 else 0
             )
             
+            latency_seconds = time.time() - start_time
+            metrics.record_rag_eval("response", "success", latency_seconds, scores)
+            
             return {
                 "enabled": True,
                 "scores": scores,
@@ -202,6 +220,9 @@ class RAGRealTimeEvaluator:
             
         except Exception as e:
             logger.error(f"回答评估失败: {e}")
+            latency_seconds = time.time() - start_time
+            metrics.record_rag_eval("response", "error", latency_seconds)
+            metrics.record_eval_llm_error()
             return {"enabled": True, "error": str(e)}
     
     def enable(self):

@@ -72,6 +72,31 @@ rag_reranker_calls = Counter(
     ['status']
 )
 
+rag_eval_total = Counter(
+    'rag_eval_total',
+    'Total number of RAG evaluations',
+    ['eval_type', 'status']
+)
+
+rag_eval_latency = Histogram(
+    'rag_eval_latency_seconds',
+    'RAG evaluation latency in seconds',
+    ['eval_type'],
+    buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0)
+)
+
+rag_eval_score = Histogram(
+    'rag_eval_score',
+    'RAG evaluation scores',
+    ['metric'],
+    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+)
+
+rag_eval_llm_errors = Counter(
+    'rag_eval_llm_errors_total',
+    'Total number of LLM errors during evaluation'
+)
+
 concurrent_tasks = Gauge(
     'concurrent_tasks',
     'Number of concurrent tasks'
@@ -165,6 +190,36 @@ class MetricsCollector:
     def record_reranker(self, status: str):
         rag_reranker_calls.labels(status=status).inc()
 
+    def record_rag_eval(self, eval_type: str, status: str, latency_seconds: float, scores: Dict[str, float] = None):
+        rag_eval_total.labels(eval_type=eval_type, status=status).inc()
+        rag_eval_latency.labels(eval_type=eval_type).observe(latency_seconds)
+        
+        if scores:
+            for metric, score in scores.items():
+                rag_eval_score.labels(metric=metric).observe(score)
+        
+        if 'eval_counts' not in self._data:
+            self._data['eval_counts'] = defaultdict(int)
+            self._data['eval_latencies'] = []
+            self._data['eval_scores'] = defaultdict(list)
+        
+        self._data['eval_counts'][status] += 1
+        self._data['eval_latencies'].append(latency_seconds)
+        if len(self._data['eval_latencies']) > self._max_history:
+            self._data['eval_latencies'] = self._data['eval_latencies'][-self._max_history:]
+        
+        if scores:
+            for metric, score in scores.items():
+                self._data['eval_scores'][metric].append(score)
+                if len(self._data['eval_scores'][metric]) > self._max_history:
+                    self._data['eval_scores'][metric] = self._data['eval_scores'][metric][-self._max_history:]
+
+    def record_eval_llm_error(self):
+        rag_eval_llm_errors.inc()
+        if 'eval_errors' not in self._data:
+            self._data['eval_errors'] = 0
+        self._data['eval_errors'] += 1
+
     def get_stats(self) -> Dict[str, Any]:
         stats = {
             'uptime': time.time() - self._data['start_time'],
@@ -199,6 +254,18 @@ class MetricsCollector:
                 stats[f'agent_avg_duration_{agent_name}'] = sum(durations) / len(durations)
             else:
                 stats[f'agent_avg_duration_{agent_name}'] = 0
+
+        if 'eval_counts' in self._data:
+            stats['eval_counts'] = dict(self._data['eval_counts'])
+            stats['eval_errors'] = self._data.get('eval_errors', 0)
+
+        if self._data.get('eval_latencies'):
+            stats['eval_avg_latency'] = sum(self._data['eval_latencies']) / len(self._data['eval_latencies'])
+
+        if 'eval_scores' in self._data:
+            for metric, scores in self._data['eval_scores'].items():
+                if scores:
+                    stats[f'eval_avg_{metric}'] = sum(scores) / len(scores)
 
         return stats
 

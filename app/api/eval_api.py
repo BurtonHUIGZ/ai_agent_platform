@@ -41,16 +41,35 @@ def eval_rag(top_k: int = 5, token: str = Header(None)):
     check(token, "eval.view")
     
     evaluator.top_k = top_k
-    result = evaluator.evaluate_all()
+    eval_result = evaluator.evaluate_all()
     
     stats = eval_db.get_stats()
     explicit_acc = eval_db.get_accuracy(use_implicit=False)
     implicit_acc = eval_db.get_accuracy(use_implicit=True)
     
+    result = {
+        "total_cases": eval_result.get("total_cases", 0),
+        "avg_recall": eval_result.get("avg_recall", 0),
+        "avg_precision": eval_result.get("avg_precision", 0),
+        "avg_mrr": eval_result.get("avg_mrr", 0),
+        "hit_at_1": eval_result.get("hit_at_1", 0),
+        "hit_at_3": eval_result.get("hit_at_3", 0),
+        "hit_at_5": eval_result.get("hit_at_5", 0),
+        "avg_latency_ms": eval_result.get("avg_latency_ms", 0),
+        "avg_score": eval_result.get("avg_score", 0),
+        "by_category": eval_result.get("by_category", {}),
+        "by_difficulty": eval_result.get("by_difficulty", {}),
+    }
+    
     result["total_feedbacks"] = stats["total_feedbacks"]
     result["explicit_accuracy"] = round(explicit_acc, 4)
     result["implicit_accuracy"] = round(implicit_acc, 4)
     result["avg_response_latency"] = round(stats["avg_latency_ms"], 2)
+    
+    if stats["total_feedbacks"] > 0:
+        result["has_realtime_data"] = True
+    else:
+        result["has_realtime_data"] = False
     
     return {"code": 200, "data": result}
 

@@ -274,42 +274,73 @@ function displayRagEval(evalResult) {
     const completeness = ((scores.completeness || 0) * 100).toFixed(0);
     const groundedness = ((scores.groundedness || 0) * 100).toFixed(0);
     const helpfulness = ((scores.helpfulness || 0) * 100).toFixed(0);
+    const relevance = ((scores.relevance || 0) * 100).toFixed(0);
+    const diversity = ((scores.diversity || 0) * 100).toFixed(0);
+    const isRetrieval = scores.relevance !== undefined;
+    
+    const evalTypeLabel = isRetrieval ? '检索评估' : '回答评估';
+    const evalTypeDesc = isRetrieval ? '衡量检索结果的质量' : '衡量生成回答的质量';
     
     evalDiv.innerHTML = `
         <div class="panel-title">
             <i class="fa-solid fa-chart-line"></i>
-            RAG实时评估
+            ${evalTypeLabel}
             <span class="eval-overall-score">${overallScore.toFixed(1)}%</span>
+            <span class="eval-type-desc">${evalTypeDesc}</span>
         </div>
         <div class="eval-scores">
-            <div class="eval-score-item">
-                <span class="eval-label">准确性</span>
+            ${isRetrieval ? `
+            <div class="eval-score-item" title="检索文档与查询意图的匹配程度">
+                <span class="eval-label">相关性<span class="eval-desc">(检索文档与查询的匹配度)</span></span>
                 <div class="eval-bar-track">
-                    <div class="eval-bar-fill" style="width: ${accuracy}%"></div>
+                    <div class="eval-bar-fill" style="width: ${relevance}%"></div>
                 </div>
-                <span class="eval-value">${accuracy}%</span>
+                <span class="eval-value">${relevance}%</span>
             </div>
-            <div class="eval-score-item">
-                <span class="eval-label">完整性</span>
+            <div class="eval-score-item" title="检索结果是否涵盖查询所需的信息">
+                <span class="eval-label">完整性<span class="eval-desc">(检索结果的覆盖程度)</span></span>
                 <div class="eval-bar-track">
                     <div class="eval-bar-fill" style="width: ${completeness}%"></div>
                 </div>
                 <span class="eval-value">${completeness}%</span>
             </div>
-            <div class="eval-score-item">
-                <span class="eval-label">有据性</span>
+            <div class="eval-score-item" title="检索结果的多样性，避免重复内容">
+                <span class="eval-label">多样性<span class="eval-desc">(结果内容的丰富程度)</span></span>
+                <div class="eval-bar-track">
+                    <div class="eval-bar-fill" style="width: ${diversity}%"></div>
+                </div>
+                <span class="eval-value">${diversity}%</span>
+            </div>
+            ` : `
+            <div class="eval-score-item" title="回答内容与参考文档的一致程度">
+                <span class="eval-label">准确性<span class="eval-desc">(回答与参考文档的一致性)</span></span>
+                <div class="eval-bar-track">
+                    <div class="eval-bar-fill" style="width: ${accuracy}%"></div>
+                </div>
+                <span class="eval-value">${accuracy}%</span>
+            </div>
+            <div class="eval-score-item" title="回答是否完整答复了用户问题">
+                <span class="eval-label">完整性<span class="eval-desc">(回答问题的全面程度)</span></span>
+                <div class="eval-bar-track">
+                    <div class="eval-bar-fill" style="width: ${completeness}%"></div>
+                </div>
+                <span class="eval-value">${completeness}%</span>
+            </div>
+            <div class="eval-score-item" title="回答是否基于检索文档，无幻觉">
+                <span class="eval-label">有据性<span class="eval-desc">(回答是否基于检索内容)</span></span>
                 <div class="eval-bar-track">
                     <div class="eval-bar-fill" style="width: ${groundedness}%"></div>
                 </div>
                 <span class="eval-value">${groundedness}%</span>
             </div>
-            <div class="eval-score-item">
-                <span class="eval-label">帮助性</span>
+            <div class="eval-score-item" title="回答对用户的帮助程度">
+                <span class="eval-label">帮助性<span class="eval-desc">(对用户的实用程度)</span></span>
                 <div class="eval-bar-track">
                     <div class="eval-bar-fill" style="width: ${helpfulness}%"></div>
                 </div>
                 <span class="eval-value">${helpfulness}%</span>
             </div>
+            `}
         </div>
     `;
 }
@@ -925,13 +956,29 @@ async function loadEvalStats() {
             const data = await res.json();
             
             const d = data.data || {};
-            document.getElementById("evalTotalCases").textContent = d.total_cases || 0;
-            document.getElementById("evalRecall").textContent = ((d.avg_recall || 0) * 100).toFixed(1) + '%';
-            document.getElementById("evalPrecision").textContent = ((d.avg_precision || 0) * 100).toFixed(1) + '%';
-            document.getElementById("evalMRR").textContent = ((d.avg_mrr || 0) * 100).toFixed(1) + '%';
+            
+            const hasOfflineData = (d.total_cases || 0) > 0 && ((d.avg_recall || 0) + d.avg_precision + d.avg_mrr) > 0;
+            
+            if (hasOfflineData) {
+                document.getElementById("evalTotalCases").textContent = d.total_cases || 0;
+                document.getElementById("evalRecall").textContent = ((d.avg_recall || 0) * 100).toFixed(1) + '%';
+                document.getElementById("evalPrecision").textContent = ((d.avg_precision || 0) * 100).toFixed(1) + '%';
+                document.getElementById("evalMRR").textContent = ((d.avg_mrr || 0) * 100).toFixed(1) + '%';
+            } else if ((d.total_feedbacks || 0) > 0) {
+                document.getElementById("evalTotalCases").textContent = d.total_feedbacks + ' (实时)';
+                document.getElementById("evalRecall").textContent = ((d.implicit_accuracy || 0) * 100).toFixed(1) + '%';
+                document.getElementById("evalPrecision").textContent = ((d.explicit_accuracy || 0) * 100).toFixed(1) + '%';
+                document.getElementById("evalMRR").textContent = ((d.avg_score || 0) * 100).toFixed(1) + '%';
+            } else {
+                document.getElementById("evalTotalCases").textContent = '0';
+                document.getElementById("evalRecall").textContent = '0%';
+                document.getElementById("evalPrecision").textContent = '0%';
+                document.getElementById("evalMRR").textContent = '0%';
+            }
+            
             document.getElementById("evalExplicitAcc").textContent = ((d.explicit_accuracy || 0) * 100).toFixed(1) + '%';
             document.getElementById("evalImplicitAcc").textContent = ((d.implicit_accuracy || 0) * 100).toFixed(1) + '%';
-            document.getElementById("evalLatency").textContent = (d.avg_latency_ms || 0).toFixed(0) + 'ms';
+            document.getElementById("evalLatency").textContent = (d.avg_response_latency || d.avg_latency_ms || 0).toFixed(0) + 'ms';
             document.getElementById("evalFeedbacks").textContent = d.total_feedbacks || 0;
             
             const byCategory = d.by_category || {};

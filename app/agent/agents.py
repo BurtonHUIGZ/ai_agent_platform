@@ -41,10 +41,21 @@ class SearchUserMemoryInput(BaseModel):
     query: str
 
 
+_rag_tools_session_id = None
+
+
+def _set_rag_session_id(session_id: str):
+    global _rag_tools_session_id
+    _rag_tools_session_id = session_id
+
+
+def _get_rag_session_id():
+    global _rag_tools_session_id
+    return _rag_tools_session_id or "default"
+
+
 def _create_rag_tools():
-    _session_id = str(uuid.uuid4())
-    
-    def _search_knowledge_base(query: str, top_k: int = 5) -> str:
+    def _search_knowledge_base(query: str, top_k: int = 5, session_id: str = None) -> str:
         """搜索知识库获取相关信息"""
         try:
             import time
@@ -57,11 +68,12 @@ def _create_rag_tools():
             
             result_text = "\n\n".join([f"{i}. {r.get('content', '')}" for i, r in enumerate(results, 1)])
             
+            use_session_id = session_id or _get_rag_session_id()
             try:
                 rag_realtime_evaluator.evaluate_retrieval(
                     query=query,
                     retrieved_docs=results,
-                    session_id=_session_id,
+                    session_id=use_session_id,
                     latency_ms=latency_ms
                 )
             except Exception as eval_error:
@@ -71,7 +83,7 @@ def _create_rag_tools():
         except Exception as e:
             return f"检索失败: {e}"
     
-    def _search_user_memory(query: str) -> str:
+    def _search_user_memory(query: str, session_id: str = None) -> str:
         """搜索用户历史记忆和偏好"""
         try:
             results = memory.hybrid_retrieve(user_id="default", query=query, top_k=3, user_top_k=3, kb_top_k=3)
@@ -134,3 +146,5 @@ router = agents["router"]
 
 from app.agent.tasks import init_task_factory
 init_task_factory(agents)
+
+__all__ = ['load_agents', 'agents', 'researcher', 'executor', 'validator', 'manager', 'router', '_set_rag_session_id']
