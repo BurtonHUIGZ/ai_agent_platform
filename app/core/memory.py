@@ -579,10 +579,57 @@ class LongTermMemory:
         
         result = fused_memories[:top_k]
         
+        result = self._filter_by_relevance(result)
+        
+        result = self._truncate_by_tokens(result)
+        
         if use_cache:
-            retrieval_cache.set(query, fused_memories, user_id)
+            retrieval_cache.set(query, result, user_id)
         
         return result
+    
+    def _filter_by_relevance(self, results: List[Dict[str, Any]], min_score: float = 0.2) -> List[Dict[str, Any]]:
+        if not results:
+            return results
+        
+        before_count = len(results)
+        filtered = [r for r in results if r.get("similarity", r.get("rrf_score", 0)) >= min_score]
+        
+        if len(filtered) < before_count:
+            logger.warning(f"相关性过滤: {before_count} -> {len(filtered)} (阈值: {min_score})")
+        
+        return filtered if filtered else results[:3]
+    
+    def _truncate_by_tokens(self, results: List[Dict[str, Any]], max_tokens: int = 4000) -> List[Dict[str, Any]]:
+        if not results:
+            return results
+        
+        total_tokens = 0
+        truncated = []
+        truncated_count = 0
+        
+        for r in results:
+            content = r.get("content", "") or r.get("full_content", "")
+            tokens = estimate_tokens(content)
+            
+            if total_tokens + tokens > max_tokens:
+                remaining = max_tokens - total_tokens
+                if remaining > 100:
+                    r = r.copy()
+                    r["content"] = content[:remaining * 4]
+                    r["truncated"] = True
+                    truncated.append(r)
+                    truncated_count += 1
+                    logger.warning(f"内容截断: 原文 {tokens} tokens, 保留 {remaining} tokens")
+                break
+            
+            truncated.append(r)
+            total_tokens += tokens
+        
+        if truncated_count > 0:
+            logger.warning(f"长度截断: {len(results)} -> {len(truncated)}, 总 tokens: {total_tokens}")
+        
+        return truncated
 
     def _calc_time_weight(self, created_at: str) -> float:
         try:
